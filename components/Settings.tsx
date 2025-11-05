@@ -3,7 +3,8 @@ import { User, UserRole, AppSettings, License } from '../types';
 import Icon from './common/Icon';
 import { getSettings, saveSettings, checkApiStatus, checkDatabaseBackupStatus, backupDatabase, restoreDatabase, clearDatabase, getLicenseTotals, getLicenses } from '../services/apiService';
 import DataConsolidation from './DataConsolidation';
-import LicenseImport from './LicenseImport'; // Novo import
+import LicenseImport from './LicenseImport';
+import PeriodicAbsoluteUpdate from './PeriodicAbsoluteUpdate'; // Novo import
 
 interface SettingsProps {
     currentUser: User;
@@ -108,6 +109,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         isSsoEnabled: false,
         is2faEnabled: false,
         require2fa: false,
+        hasInitialConsolidationRun: false,
     });
     const [termoEntregaTemplate, setTermoEntregaTemplate] = useState('');
     const [termoDevolucaoTemplate, setTermoDevolucaoTemplate] = useState('');
@@ -160,6 +162,7 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                     isSsoEnabled: data.isSsoEnabled || false,
                     is2faEnabled: data.is2faEnabled || false,
                     require2fa: data.require2fa || false,
+                    hasInitialConsolidationRun: data.hasInitialConsolidationRun || false,
                 });
                 setTermoEntregaTemplate(data.termo_entrega_template || DEFAULT_ENTREGA_TEMPLATE);
                 setTermoDevolucaoTemplate(data.termo_devolucao_template || DEFAULT_DEVOLUCAO_TEMPLATE);
@@ -687,9 +690,19 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                     )}
                     
                     {activeSettingsTab === 'import' && currentUser.role === UserRole.Admin && (
-                        <div>
-                            <DataConsolidation currentUser={currentUser} />
-                            <LicenseImport 
+                         <div className="space-y-8">
+                            {!settings.hasInitialConsolidationRun ? (
+                                <DataConsolidation 
+                                    currentUser={currentUser} 
+                                    onImportSuccess={fetchAllData} 
+                                />
+                            ) : (
+                                <PeriodicAbsoluteUpdate 
+                                    currentUser={currentUser} 
+                                    onUpdateSuccess={fetchAllData} 
+                                />
+                            )}
+                             <LicenseImport 
                                 currentUser={currentUser} 
                                 productNames={productNames} 
                                 onImportSuccess={fetchAllData}

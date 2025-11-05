@@ -45,7 +45,12 @@ const FileUploadBox: React.FC<{
     );
 };
 
-const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => {
+interface DataConsolidationProps {
+    currentUser: User;
+    onImportSuccess: () => void;
+}
+
+const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onImportSuccess }) => {
     const [baseFile, setBaseFile] = useState<File | null>(null);
     const [absoluteFile, setAbsoluteFile] = useState<File | null>(null);
     const [consolidatedData, setConsolidatedData] = useState<PartialEquipment[]>([]);
@@ -214,8 +219,8 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
             const dataToSave = consolidatedData.map(item => ({...item, id: undefined})) as Omit<Equipment, 'id'>[];
             const result = await importEquipment(dataToSave, currentUser.username);
             if (result.success) {
-                alert('Inventário consolidado e salvo com sucesso! A aplicação será recarregada para refletir as mudanças.');
-                window.location.reload();
+                alert('Inventário consolidado e salvo com sucesso!');
+                onImportSuccess();
             } else {
                 setError(`Falha ao salvar no sistema: ${result.message}`);
             }
@@ -242,22 +247,25 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
     ];
 
     return (
-        <div className="bg-white dark:bg-dark-card p-6 rounded-lg shadow-md">
-            <h3 className="text-xl font-bold text-brand-secondary dark:text-dark-text-primary mb-2 border-b dark:border-dark-border pb-2">Ferramenta de Consolidação de Inventário</h3>
-            <p className="text-sm text-gray-500 dark:text-dark-text-secondary mb-4">
-                Faça o upload da Planilha Base e do Relatório Absolute para consolidar os dados. O resultado substituirá o inventário atual do sistema.
+        <div className="p-6 bg-gray-50 dark:bg-dark-bg rounded-lg border dark:border-dark-border">
+            <h3 className="text-lg font-bold text-brand-secondary dark:text-dark-text-primary mb-2 flex items-center gap-2">
+                <Icon name="DatabaseZap" size={20} />
+                Etapa 1: Consolidação Inicial do Inventário
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-dark-text-secondary mb-4">
+                Este é o primeiro passo para popular o sistema. Faça o upload da Planilha Base e/ou do Relatório Absolute para criar a base de dados inicial. Após esta etapa, esta ferramenta será desativada.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FileUploadBox
-                    title="1. Planilha Base"
+                    title="Planilha Base"
                     icon="Sheet"
                     file={baseFile}
                     onFileChange={(e) => setBaseFile(e.target.files ? e.target.files[0] : null)}
                     isLoading={isLoading || isSaving}
                 />
                 <FileUploadBox
-                    title="2. Relatório Absolute"
+                    title="Relatório Absolute"
                     icon="FileText"
                     file={absoluteFile}
                     onFileChange={(e) => setAbsoluteFile(e.target.files ? e.target.files[0] : null)}
@@ -280,7 +288,7 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
                     aria-label={isLoading ? 'Processando dados' : 'Consolidar dados'}
                 >
                     {isLoading ? <Icon name="LoaderCircle" className="animate-spin" /> : <Icon name="Combine" />}
-                    {isLoading ? 'Processando...' : '1. Consolidar Dados'}
+                    {isLoading ? 'Processando...' : 'Consolidar Dados'}
                 </button>
             </div>
 
@@ -327,7 +335,7 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
                             aria-label={isSaving ? 'Salvando inventário' : 'Salvar e substituir inventário'}
                         >
                             {isSaving ? <Icon name="LoaderCircle" className="animate-spin" /> : <Icon name="Save" />}
-                            {isSaving ? 'Salvando...' : '2. Salvar e Substituir Inventário'}
+                            {isSaving ? 'Salvando...' : 'Salvar e Substituir Inventário'}
                         </button>
                     </div>
                  </div>
