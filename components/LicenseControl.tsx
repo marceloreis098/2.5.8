@@ -532,7 +532,8 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         return null;
     };
 
-    const isExpiringSoon = (dateStr: string) => { 
+    // FIX: Updated `dateStr` parameter type to `string | undefined` to match `License.dataExpiracao`.
+    const isExpiringSoon = (dateStr: string | undefined) => { 
         const expDate = parseDateString(dateStr);
         if (!expDate) return false;
         const today = new Date();
@@ -541,7 +542,8 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         return expDate > today && expDate <= thirtyDaysFromNow;
     }
     
-     const isExpired = (dateStr: string) => { 
+    // FIX: Updated `dateStr` parameter type to `string | undefined` to match `License.dataExpiracao`.
+     const isExpired = (dateStr: string | undefined) => { 
         const expDate = parseDateString(dateStr);
         if (!expDate) return false;
         const today = new Date();

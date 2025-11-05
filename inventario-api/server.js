@@ -212,6 +212,11 @@ const runMigrations = async () => {
                 id: 19, sql: `
                 UPDATE equipment SET status = 'Em Uso' WHERE usuarioAtual IS NOT NULL AND usuarioAtual != '';
                 `
+            },
+            { // Migration 20: Add lastAbsoluteUpdateTimestamp to app_config
+                id: 20, sql: `
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('lastAbsoluteUpdateTimestamp', NULL);
+                `
             }
         ];
         
@@ -571,6 +576,11 @@ app.post('/api/equipment/import', isAdmin, async (req, res) => {
             await connection.query('UPDATE equipment SET qrCode = ? WHERE id = ?', [qrCodeValue, insertedId]);
         }
 
+        await connection.query(
+            "INSERT INTO app_config (config_key, config_value) VALUES ('lastAbsoluteUpdateTimestamp', ?) ON DUPLICATE KEY UPDATE config_value = ?",
+            [new Date().toISOString(), new Date().toISOString()]
+        );
+
         await connection.commit();
         logAction(username, 'UPDATE', 'EQUIPMENT', 'ALL', `Replaced entire equipment inventory with ${equipmentList.length} items via consolidation tool.`);
         res.json({ success: true, message: 'Inventário de equipamentos importado com sucesso.' });
@@ -852,7 +862,7 @@ app.post('/api/generate-2fa', async (req, res) => {
 });
 
 app.post('/api/enable-2fa', async (req, res) => {
-    const { userId, token } = req.body;
+    const { userId } = req.body;
     try {
         const [users] = await db.promise().query('SELECT twoFASecret FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ message: 'User not found' });

@@ -161,7 +161,7 @@ export const getSettings = (): Promise<AppSettings> => {
 };
 
 // Updated return type to match the new JSON response from backend
-export const saveSettings = (settings: AppSettings, username: string): Promise<{ success: boolean; message: string; }> => {
+export const saveSettings = (settings: AppSettings, username: string): Promise<{ success: boolean; message: string; lastAbsoluteUpdateTimestamp?: string }> => {
     return apiRequest('/settings', { method: 'POST', body: JSON.stringify({ settings, username }) });
 };
 

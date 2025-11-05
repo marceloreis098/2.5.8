@@ -106,64 +106,83 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
     };
 
     const handleConsolidate = async () => {
-        if (!baseFile || !absoluteFile) return;
+        if (!baseFile && !absoluteFile) {
+            setError("Por favor, selecione pelo menos um arquivo (Planilha Base ou Relatório Absolute).");
+            return;
+        }
 
         setIsLoading(true);
         setError(null);
         setConsolidatedData([]);
 
         try {
-            const baseText = await baseFile.text();
-            const absoluteText = await absoluteFile.text();
+            let finalData: PartialEquipment[] = [];
+            let baseData: PartialEquipment[] = [];
+            let absoluteData: PartialEquipment[] = [];
+
+            if (baseFile) {
+                const baseText = await baseFile.text();
+                const baseMappings: { [key: string]: keyof Equipment } = {
+                    'EQUIPAMENTO': 'equipamento', 'GARANTIA': 'garantia', 'PATRIMONIO': 'patrimonio', 'SERIAL': 'serial',
+                    'USUÁRIO ATUAL': 'usuarioAtual', 'USUÁRIO ANTERIOR': 'usuarioAnterior', 'LOCAL': 'local', 'SETOR': 'setor',
+                    'DATA ENTREGA O USUÁRIO': 'dataEntregaUsuario', 'STATUS': 'status', 'DATA DE DEVOLUÇÃO': 'dataDevolucao',
+                    'TIPO': 'tipo', 'NOTA DE COMPRA': 'notaCompra', 'NOTA / PL K&M': 'notaPlKm',
+                    'TERMO DE RESPONSABILIDADE': 'termoResponsabilidade', 'FOTO': 'foto', 'QR CODE': 'qrCode',
+                    'MARCA': 'brand', 'MODELO': 'model', 'EMAIL COLABORADOR': 'emailColaborador',
+                    // Novos campos - Planilha Base
+                    'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
+                    'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
+                };
+                baseData = parseCsv(baseText, baseMappings);
+            }
+
+            if (absoluteFile) {
+                const absoluteText = await absoluteFile.text();
+                const absoluteMappings: { [key: string]: keyof Equipment } = {
+                    'NOMEDODISPOSITIVO': 'equipamento', 'NÚMERODESÉRIE': 'serial',
+                    'NOMEDOUSUÁRIOATUAL': 'usuarioAtual', 'MARCA': 'brand', 'MODELO': 'model',
+                    'EMAIL DO COLABORADOR': 'emailColaborador',
+                    // Novos campos - Relatório Absolute
+                    'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
+                    'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
+                };
+                absoluteData = parseCsv(absoluteText, absoluteMappings);
+            }
+
+            if (baseFile && absoluteFile) {
+                // Existing consolidation logic
+                const consolidatedMap = new Map<string, PartialEquipment>();
+                baseData.forEach(baseItem => {
+                    const key = baseItem.serial!.toUpperCase().replace(/ /g, '');
+                    consolidatedMap.set(key, baseItem);
+                });
+                absoluteData.forEach(absoluteItem => {
+                    const key = absoluteItem.serial!.toUpperCase().replace(/ /g, '');
+                    const existingItem = consolidatedMap.get(key) || {};
+                    consolidatedMap.set(key, { ...existingItem, ...absoluteItem });
+                });
+                finalData = Array.from(consolidatedMap.values()).map(item => {
+                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
+                        return { ...item, status: 'Em Uso' };
+                    }
+                    return item;
+                });
+            } else if (baseFile) {
+                finalData = baseData.map(item => {
+                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
+                        return { ...item, status: 'Em Uso' };
+                    }
+                    return item;
+                });
+            } else if (absoluteFile) {
+                finalData = absoluteData.map(item => {
+                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
+                        return { ...item, status: 'Em Uso' };
+                    }
+                    return item;
+                });
+            }
             
-            const baseMappings: { [key: string]: keyof Equipment } = {
-                'EQUIPAMENTO': 'equipamento', 'GARANTIA': 'garantia', 'PATRIMONIO': 'patrimonio', 'SERIAL': 'serial',
-                'USUÁRIO ATUAL': 'usuarioAtual', 'USUÁRIO ANTERIOR': 'usuarioAnterior', 'LOCAL': 'local', 'SETOR': 'setor',
-                'DATA ENTREGA O USUÁRIO': 'dataEntregaUsuario', 'STATUS': 'status', 'DATA DE DEVOLUÇÃO': 'dataDevolucao',
-                'TIPO': 'tipo', 'NOTA DE COMPRA': 'notaCompra', 'NOTA / PL K&M': 'notaPlKm',
-                'TERMO DE RESPONSABILIDADE': 'termoResponsabilidade', 'FOTO': 'foto', 'QR CODE': 'qrCode',
-                'MARCA': 'brand', 'MODELO': 'model', 'EMAIL COLABORADOR': 'emailColaborador',
-                // Novos campos - Planilha Base
-                'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
-                'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
-            };
-
-            const absoluteMappings: { [key: string]: keyof Equipment } = {
-                'NOMEDODISPOSITIVO': 'equipamento', 'NÚMERODESÉRIE': 'serial',
-                'NOMEDOUSUÁRIOATUAL': 'usuarioAtual', 'MARCA': 'brand', 'MODELO': 'model',
-                'EMAIL DO COLABORADOR': 'emailColaborador',
-                // Novos campos - Relatório Absolute
-                'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
-                'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
-            };
-
-            const baseData = parseCsv(baseText, baseMappings);
-            const absoluteData = parseCsv(absoluteText, absoluteMappings);
-            
-            const consolidatedMap = new Map<string, PartialEquipment>();
-
-            // Process base data first. This handles duplicates within the base file (last one wins).
-            baseData.forEach(baseItem => {
-                const key = baseItem.serial!.toUpperCase().replace(/ /g, '');
-                consolidatedMap.set(key, baseItem);
-            });
-
-            // Process absolute data, merging with or adding to the base data.
-            // This handles duplicates within the absolute file and ensures its data has priority.
-            absoluteData.forEach(absoluteItem => {
-                const key = absoluteItem.serial!.toUpperCase().replace(/ /g, '');
-                const existingItem = consolidatedMap.get(key) || {};
-                consolidatedMap.set(key, { ...existingItem, ...absoluteItem });
-            });
-            
-            const finalData = Array.from(consolidatedMap.values()).map(item => {
-                // If there's a current user, force the status to 'Em Uso'
-                if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
-                    return { ...item, status: 'Em Uso' };
-                }
-                return item;
-            });
-
             setConsolidatedData(finalData);
 
         } catch (e: any) {
@@ -176,7 +195,18 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
     
     const handleSaveToSystem = async () => {
         if (consolidatedData.length === 0) return;
-        if (!window.confirm(`ATENÇÃO: Esta ação substituirá TODO o inventário de equipamentos e seu histórico por ${consolidatedData.length} novos itens consolidados. Esta ação é irreversível. Deseja continuar?`)) return;
+        
+        let confirmMessage = `ATENÇÃO: Esta ação substituirá TODO o inventário de equipamentos e seu histórico por ${consolidatedData.length} novos itens`;
+        if (baseFile && absoluteFile) {
+            confirmMessage += ` consolidados dos arquivos.`;
+        } else if (baseFile) {
+            confirmMessage += ` da Planilha Base.`;
+        } else if (absoluteFile) {
+            confirmMessage += ` do Relatório Absolute.`;
+        }
+        confirmMessage += ` Esta ação é irreversível. Deseja continuar?`;
+
+        if (!window.confirm(confirmMessage)) return;
         
         setIsSaving(true);
         setError(null);
@@ -245,7 +275,7 @@ const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => 
             <div className="mt-6 flex justify-center">
                 <button
                     onClick={handleConsolidate}
-                    disabled={!baseFile || !absoluteFile || isLoading || isSaving}
+                    disabled={(!baseFile && !absoluteFile) || isLoading || isSaving}
                     className="bg-brand-primary text-white px-8 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center gap-2 text-lg font-semibold"
                     aria-label={isLoading ? 'Processando dados' : 'Consolidar dados'}
                 >

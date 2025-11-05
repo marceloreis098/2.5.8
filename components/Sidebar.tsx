@@ -15,7 +15,8 @@ const pageIcons: { [key in Page]: keyof typeof icons } = {
     'Dashboard': 'LayoutDashboard',
     'Inventário de Equipamentos': 'Computer',
     'Controle de Licenças': 'ScrollText',
-    'Usuários e Permissões': 'Users',
+    // FIX: Corrected page name to match the updated 'Page' type definition in types.ts
+    'Usuários e Permissões': 'Users', 
     'Configurações': 'Settings',
     'Auditoria': 'History',
 }

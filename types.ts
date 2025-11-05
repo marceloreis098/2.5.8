@@ -1,5 +1,6 @@
 // types.ts
 
+// FIX: Corrected typo from 'Usuários e e Permissões' to 'Usuários e Permissões'
 export type Page = 'Dashboard' | 'Inventário de Equipamentos' | 'Controle de Licenças' | 'Usuários e Permissões' | 'Configurações' | 'Auditoria';
 
 export enum UserRole {
@@ -111,4 +112,5 @@ export interface AppSettings {
     smtpSecure?: boolean;
     termo_entrega_template?: string;
     termo_devolucao_template?: string;
+    lastAbsoluteUpdateTimestamp?: string; // New field for tracking last inventory update
 }

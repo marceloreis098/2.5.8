@@ -116,6 +116,7 @@ const App: React.FC = () => {
   ];
 
   if (currentUser && [UserRole.Admin, UserRole.UserManager].includes(currentUser.role)) {
+    // FIX: Corrected page name to match the updated 'Page' type definition.
     pages.push('Usuários e Permissões');
   }
 
