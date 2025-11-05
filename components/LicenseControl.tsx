@@ -1,140 +1,7 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { getLicenses, addLicense, updateLicense, deleteLicense, renameProduct, getLicenseTotals, saveLicenseTotals } from '../services/apiService';
+import React, { useState, useMemo, useEffect } from 'react';
+import { getLicenses, addLicense, updateLicense, deleteLicense } from '../services/apiService';
 import { License, User, UserRole } from '../types';
 import Icon from './common/Icon';
-
-const ProductManagementModal: React.FC<{
-    initialProductNames: string[];
-    onClose: () => void;
-    onSave: (newProductNames: string[], renames: Record<string, string>) => void;
-}> = ({ initialProductNames, onClose, onSave }) => {
-    const [productNames, setProductNames] = useState([...initialProductNames].sort());
-    const [newProductName, setNewProductName] = useState('');
-    const [editingProduct, setEditingProduct] = useState<string | null>(null);
-    const [draftName, setDraftName] = useState('');
-    const [renames, setRenames] = useState<Record<string, string>>({});
-    const editInputRef = useRef<HTMLInputElement>(null);
-
-     useEffect(() => {
-        if (editingProduct && editInputRef.current) {
-            editInputRef.current.focus();
-        }
-    }, [editingProduct]);
-
-    const handleAddProduct = () => {
-        const trimmedName = newProductName.trim();
-        if (trimmedName && !productNames.find(p => p.toLowerCase() === trimmedName.toLowerCase())) {
-            setProductNames(prev => [...prev, trimmedName].sort());
-            setNewProductName('');
-        }
-    };
-
-    const handleDeleteProduct = (productNameToDelete: string) => {
-        if (window.confirm(`Tem certeza que deseja remover "${productNameToDelete}" da lista de produtos?`)) {
-            setProductNames(prev => prev.filter(p => p !== productNameToDelete));
-        }
-    };
-
-    const handleStartEditing = (productName: string) => {
-        setEditingProduct(productName);
-        setDraftName(productName);
-    };
-
-    const handleCancelEditing = () => {
-        setEditingProduct(null);
-        setDraftName('');
-    };
-    
-    const handleConfirmEdit = () => {
-        if (!editingProduct || !draftName.trim() || draftName.trim() === editingProduct) {
-            handleCancelEditing();
-            return;
-        }
-        const trimmedDraft = draftName.trim();
-        
-        if (productNames.find(p => p.toLowerCase() === trimmedDraft.toLowerCase() && p !== editingProduct)) {
-            alert(`O produto "${trimmedDraft}" já existe.`);
-            return;
-        }
-
-        setProductNames(prev => prev.map(p => p === editingProduct ? trimmedDraft : p).sort());
-        setRenames(prev => ({ ...prev, [editingProduct]: trimmedDraft }));
-        handleCancelEditing();
-    };
-
-    const handleSave = () => {
-        onSave(productNames, renames);
-        onClose();
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-[60] p-4">
-            <div className="bg-white dark:bg-dark-card rounded-lg shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b dark:border-dark-border">
-                    <h3 className="text-xl font-bold text-brand-dark dark:text-dark-text-primary">Gerenciar Nomes de Produtos</h3>
-                </div>
-                <div className="p-6 space-y-4 overflow-y-auto">
-                    <p className="text-sm text-gray-600 dark:text-dark-text-secondary">Adicione ou remova os nomes de software que aparecerão na caixa de seleção ao criar uma nova licença.</p>
-                    <div className="space-y-2">
-                        {productNames.map(name => (
-                            <div key={name} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-dark-bg rounded">
-                                {editingProduct === name ? (
-                                    <div className="flex-grow flex items-center gap-2">
-                                        <input
-                                            ref={editInputRef}
-                                            type="text"
-                                            value={draftName}
-                                            onChange={(e) => setDraftName(e.target.value)}
-                                            onBlur={handleConfirmEdit}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') handleConfirmEdit();
-                                                if (e.key === 'Escape') handleCancelEditing();
-                                            }}
-                                            className="flex-grow p-1 border dark:border-dark-border rounded-md bg-white dark:bg-gray-800"
-                                        />
-                                        <button onClick={handleConfirmEdit} className="text-green-500 hover:text-green-700" title="Salvar"><Icon name="Check" size={20} /></button>
-                                        <button onClick={handleCancelEditing} className="text-red-500 hover:text-red-700" title="Cancelar"><Icon name="X" size={20} /></button>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <span className="text-gray-800 dark:text-dark-text-primary">{name}</span>
-                                        <div className="flex items-center gap-3">
-                                            <button onClick={() => handleStartEditing(name)} className="text-blue-500 hover:text-blue-700" title={`Editar ${name}`}>
-                                                <Icon name="Pencil" size={16} />
-                                            </button>
-                                            <button onClick={() => handleDeleteProduct(name)} className="text-red-500 hover:text-red-700" title={`Remover ${name}`}>
-                                                <Icon name="Trash2" size={16} />
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        ))}
-                         {productNames.length === 0 && <p className="text-center text-gray-500">Nenhum produto cadastrado.</p>}
-                    </div>
-                    <div className="pt-4 border-t dark:border-dark-border">
-                         <label className="block text-sm font-medium text-gray-700 dark:text-dark-text-secondary">Adicionar novo produto</label>
-                         <div className="flex gap-2 mt-1">
-                            <input
-                                type="text"
-                                value={newProductName}
-                                onChange={(e) => setNewProductName(e.target.value)}
-                                placeholder="Nome do Software"
-                                className="flex-grow p-2 border dark:border-dark-border rounded-md bg-white dark:bg-gray-800"
-                            />
-                            <button onClick={handleAddProduct} className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">Adicionar</button>
-                        </div>
-                    </div>
-                </div>
-                <div className="p-4 bg-gray-50 dark:bg-dark-card/50 border-t dark:border-dark-border flex justify-end gap-3">
-                    <button type="button" onClick={onClose} className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">Cancelar</button>
-                    <button type="button" onClick={handleSave} className="bg-brand-primary text-white px-4 py-2 rounded hover:bg-blue-700">Salvar Alterações</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 
 const LicenseFormModal: React.FC<{
     license?: License | null;
@@ -263,107 +130,19 @@ const LicenseFormModal: React.FC<{
     );
 };
 
-const EditableTotal: React.FC<{
-    productName: string;
-    value: number;
-    onSave: (productName: string, newValue: number) => Promise<void>;
-    disabled: boolean;
-}> = ({ productName, value, onSave, disabled }) => {
-    const [isEditing, setIsEditing] = useState(false);
-    const [draftValue, setDraftValue] = useState(value);
-    const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        setDraftValue(value);
-    }, [value]);
-
-    useEffect(() => {
-        if (isEditing) {
-            inputRef.current?.focus();
-            inputRef.current?.select();
-        }
-    }, [isEditing]);
-
-    const handleSave = async () => {
-        const newTotal = parseInt(String(draftValue), 10);
-        if (!isNaN(newTotal) && newTotal >= 0) {
-            await onSave(productName, newTotal);
-        } else {
-            setDraftValue(value); // revert on invalid input
-        }
-        setIsEditing(false);
-    };
-
-    const handleCancel = () => {
-        setDraftValue(value);
-        setIsEditing(false);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') handleSave();
-        if (e.key === 'Escape') handleCancel();
-    };
-
-    if (isEditing) {
-        return (
-            <div className="flex items-center gap-2">
-                <input
-                    ref={inputRef}
-                    type="number"
-                    value={draftValue}
-                    onChange={(e) => setDraftValue(Number(e.target.value))}
-                    onKeyDown={handleKeyDown}
-                    onBlur={handleSave}
-                    className="w-20 p-1 border dark:border-dark-border rounded-md bg-white dark:bg-gray-800 text-center"
-                />
-                <button onClick={handleSave} className="text-green-500 hover:text-green-700" title="Salvar"><Icon name="Check" size={20} /></button>
-                <button onClick={handleCancel} className="text-red-500 hover:text-red-700" title="Cancelar"><Icon name="X" size={20} /></button>
-            </div>
-        );
-    }
-
-    return (
-        <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-800 dark:text-dark-text-primary">{value}</span>
-            {!disabled && (
-                <button
-                    onClick={() => setIsEditing(true)}
-                    className="text-blue-500 hover:text-blue-700 disabled:opacity-50"
-                    title="Editar total"
-                >
-                    <Icon name="Pencil" size={14} />
-                </button>
-            )}
-        </div>
-    );
-};
-
 const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [licenses, setLicenses] = useState<License[]>([]);
     const [loading, setLoading] = useState(true);
     const [isFormModalOpen, setIsFormModalOpen] = useState(false);
-    const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingLicense, setEditingLicense] = useState<License | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterProduct, setFilterProduct] = useState('');
-    const [licenseTotals, setLicenseTotals] = useState<Record<string, number>>({});
-    const [productNames, setProductNames] = useState<string[]>([]);
     
-    const isAdmin = currentUser.role === UserRole.Admin;
-
     const loadData = async () => {
         setLoading(true);
         try {
-            const [licensesData, totalsData] = await Promise.all([
-                getLicenses(currentUser),
-                getLicenseTotals()
-            ]);
+            const licensesData = await getLicenses(currentUser);
             setLicenses(licensesData);
-            setLicenseTotals(totalsData);
-            
-            const pNamesFromLicenses = [...new Set(licensesData.map(l => l.produto))];
-            const pNamesFromTotals = Object.keys(totalsData);
-            setProductNames([...new Set([...pNamesFromLicenses, ...pNamesFromTotals])].sort());
         } catch (error) {
             console.error("Failed to load license data:", error);
         } finally {
@@ -400,31 +179,10 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         }
     };
     
-    const handleSaveTotals = async (productName: string, newTotal: number) => {
-        const newTotals = { ...licenseTotals, [productName]: newTotal };
-        try {
-            await saveLicenseTotals(newTotals, currentUser.username);
-            setLicenseTotals(newTotals);
-        } catch (error) {
-            console.error("Failed to save license totals", error);
-        }
-    };
+    const productNames = useMemo(() => {
+        return [...new Set(licenses.map(l => l.produto))].sort();
+    }, [licenses]);
 
-    const handleSaveProducts = async (newProductNames: string[], renames: Record<string, string>) => {
-        setProductNames(newProductNames);
-        const newTotals = { ...licenseTotals };
-        for (const oldName in renames) {
-            const newName = renames[oldName];
-            if (oldName in newTotals) {
-                newTotals[newName] = newTotals[oldName];
-                delete newTotals[oldName];
-            }
-            await renameProduct(oldName, newName, currentUser.username);
-        }
-        await saveLicenseTotals(newTotals, currentUser.username);
-        await loadData();
-    };
-    
     const filteredLicenses = useMemo(() => {
         return licenses.filter(item => {
             const matchesSearch = searchTerm ?
@@ -436,13 +194,6 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
             return matchesSearch && matchesProduct;
         });
     }, [searchTerm, licenses, filterProduct]);
-
-    const licenseUsage = useMemo(() => {
-        return productNames.reduce((acc, name) => {
-            acc[name] = licenses.filter(l => l.produto === name).length;
-            return acc;
-        }, {} as Record<string, number>);
-    }, [licenses, productNames]);
 
     const ExpirationStatus: React.FC<{ dateStr?: string }> = ({ dateStr }) => {
         const parseDateString = (dateString: string) => {
@@ -503,11 +254,6 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
                 <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
                     <h2 className="text-2xl font-bold text-brand-dark dark:text-dark-text-primary">Controle de Licenças</h2>
                     <div className="flex gap-2">
-                        {isAdmin && (
-                            <button onClick={() => setIsProductModalOpen(true)} className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2">
-                                <Icon name="List" size={18} /> Gerenciar Produtos
-                            </button>
-                        )}
                         <button onClick={() => handleOpenFormModal()} className="bg-brand-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
                             <Icon name="CirclePlus" size={18} /> Nova Licença
                         </button>
@@ -568,42 +314,8 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
                     </div>
                 )}
             </div>
-            
-            <div className="bg-white dark:bg-dark-card p-4 sm:p-6 rounded-lg shadow-md">
-                <h3 className="text-xl font-bold text-brand-dark dark:text-dark-text-primary mb-4">Uso de Licenças</h3>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left text-gray-700 dark:text-dark-text-secondary">
-                         <thead className="text-xs text-gray-800 dark:text-dark-text-primary uppercase bg-gray-100 dark:bg-gray-900/50">
-                            <tr>
-                                <th scope="col" className="px-6 py-3">Produto</th>
-                                <th scope="col" className="px-6 py-3">Em Uso</th>
-                                <th scope="col" className="px-6 py-3">Total Adquirido</th>
-                                <th scope="col" className="px-6 py-3">Disponível</th>
-                            </tr>
-                         </thead>
-                         <tbody>
-                            {productNames.map(name => {
-                                const used = licenseUsage[name] || 0;
-                                const total = licenseTotals[name] || 0;
-                                const available = total - used;
-                                return (
-                                    <tr key={name} className="bg-white dark:bg-dark-card border-b dark:border-dark-border last:border-0">
-                                        <td className="px-6 py-4 font-medium text-gray-900 dark:text-dark-text-primary">{name}</td>
-                                        <td className="px-6 py-4">{used}</td>
-                                        <td className="px-6 py-4">
-                                            <EditableTotal productName={name} value={total} onSave={handleSaveTotals} disabled={!isAdmin} />
-                                        </td>
-                                        <td className={`px-6 py-4 font-bold ${available > 5 ? 'text-green-600' : available > 0 ? 'text-yellow-600' : 'text-red-600'}`}>{available}</td>
-                                    </tr>
-                                );
-                            })}
-                         </tbody>
-                    </table>
-                </div>
-            </div>
 
             {isFormModalOpen && <LicenseFormModal license={editingLicense} productNames={productNames} onClose={handleCloseFormModal} onSave={handleSave} currentUser={currentUser} />}
-            {isProductModalOpen && <ProductManagementModal initialProductNames={productNames} onClose={() => setIsProductModalOpen(false)} onSave={handleSaveProducts} />}
         </div>
     );
 };
