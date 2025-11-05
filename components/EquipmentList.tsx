@@ -669,16 +669,12 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
                 return;
             }
     
-            // Ensure the library is loaded. The import() call will fetch and execute the script.
-            // Even if it returns an empty module, it will attach XLSX to the window object.
             await import('xlsx');
-    
-            // The UMD library attaches itself to the window object.
             const XLSX = (window as any).XLSX;
     
             if (!XLSX || !XLSX.utils || typeof XLSX.utils.json_to_sheet !== 'function') {
-                console.error("A biblioteca XLSX não foi carregada corretamente. Verifique o objeto window.XLSX.", { xlsxFromWindow: XLSX });
-                alert("Ocorreu um erro ao carregar a biblioteca de exportação. Verifique o console para mais detalhes.");
+                console.error("A biblioteca XLSX não foi carregada corretamente.", { xlsxFromWindow: XLSX });
+                alert("Ocorreu um erro ao carregar a biblioteca de exportação. Verifique o console do navegador para mais detalhes.");
                 return;
             }
     
@@ -710,8 +706,19 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Inventário");
     
+            // Generate base64 string and create a data URI to avoid blob URL issues on HTTP
+            const base64 = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+            const dataUri = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64}`;
+
             const fileName = `inventario_equipamentos_${new Date().toISOString().split('T')[0]}.xlsx`;
-            XLSX.writeFile(wb, fileName);
+
+            const a = document.createElement('a');
+            a.href = dataUri;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
         } catch (error) {
             console.error("Erro ao exportar para XLSX:", error);
             alert("Ocorreu um erro inesperado ao tentar exportar a planilha. Verifique o console do navegador para mais detalhes.");
