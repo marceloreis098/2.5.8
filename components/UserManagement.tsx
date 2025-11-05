@@ -12,7 +12,7 @@ const UserFormModal: React.FC<{
 }> = ({ user, onClose, onSave, currentUser }) => {
     // FIX: Add `is2FAEnabled` to formData with a default value.
     // Also, explicitly type the formData to match the expected structure, omitting fields not managed by this form.
-    const [formData, setFormData] = useState<Omit<User, 'id' | 'lastLogin' | 'avatarUrl' | 'ssoProvider' | 'twoFASecret'>>({
+    const [formData, setFormData] = useState<Omit<User, 'id' | 'lastLogin' | 'avatarUrl' | 'ssoProvider'>>({
         realName: '',
         username: '',
         email: '',

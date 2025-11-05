@@ -56,7 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, setActivePage, pages, isS
         </nav>
         <div className="p-4 border-t border-gray-700 flex-shrink-0">
           <p className="text-xs text-gray-300 font-semibold">MRR INFORMATICA</p>
-          <p className="text-xs text-gray-500 mt-1">&copy; 2026 Dev: Marcelo Reis</p>
+          <p className="text-xs text-gray-500 mt-1">&copy; 2022 Dev: Marcelo Reis</p>
         </div>
       </aside>
       {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black opacity-50 z-20 lg:hidden"></div>}

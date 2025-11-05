@@ -111,7 +111,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess, isSsoEnabled }) => {
       </div>
       <div className="absolute bottom-4 text-center text-gray-500 dark:text-dark-text-secondary text-xs">
         <p className="font-semibold">MRR INFORMATICA</p>
-        <p className="text-gray-400 dark:text-gray-500 mt-1">&copy; 2026 Dev: Marcelo Reis</p>
+        <p className="text-gray-400 dark:text-gray-500 mt-1">&copy; 2022 Dev: Marcelo Reis</p>
       </div>
     </div>
   );

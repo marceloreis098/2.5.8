@@ -42,8 +42,8 @@ const AuditLog: React.FC = () => {
             case 'EQUIPMENT': return 'Computer';
             case 'LICENSE': return 'ScrollText';
             case 'USER': return 'User';
-// FIX: Corrected icon name from 'FileQuestion' to 'FileQuestionMark' as suggested by the type error.
-            default: return 'FileQuestionMark';
+// FIX: Corrected icon name from 'FileQuestionMark' to 'FileQuestion' as it is a valid lucide-react icon.
+            default: return 'FileQuestion';
         }
     };
 
@@ -54,6 +54,8 @@ const AuditLog: React.FC = () => {
             case 'CREATE': return { text: 'Criação', color: 'text-green-500', icon: 'CirclePlus' };
             case 'UPDATE': return { text: 'Atualização', color: 'text-yellow-500', icon: 'Pencil' };
             case 'DELETE': return { text: 'Exclusão', color: 'text-red-500', icon: 'Trash2' };
+            case 'LOGIN': return { text: 'Login', color: 'text-blue-500', icon: 'LogIn' };
+            case 'LOGOUT': return { text: 'Logout', color: 'text-gray-500', icon: 'LogOut' };
 // FIX: The icon 'HelpCircle' was causing a type error. Replaced with 'Info' as a safe alternative for unknown action types.
             default: return { text: log.action_type, color: 'text-gray-500', icon: 'Info' };
         }
@@ -80,6 +82,8 @@ const AuditLog: React.FC = () => {
                     <option value="CREATE">Criação</option>
                     <option value="UPDATE">Atualização</option>
                     <option value="DELETE">Exclusão</option>
+                    <option value="LOGIN">Login</option>
+                    <option value="LOGOUT">Logout</option>
                 </select>
                 <button onClick={() => { setFilterUser(''); setFilterAction(''); }} className="bg-gray-500 text-white p-2 rounded-md hover:bg-gray-600">
                     Limpar Filtros

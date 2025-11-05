@@ -1,11 +1,3 @@
-
-
-
-
-
-
-
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { getLicenses, addLicense, updateLicense, deleteLicense, renameProduct, getLicenseTotals, saveLicenseTotals } from '../services/apiService';
 import { License, User, UserRole } from '../types';
@@ -527,7 +519,6 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         );
     };
 
-    // FIX: Replaced fragile date parsing with a more robust `parseDateString` function and updated related helpers to ensure type safety.
     const parseDateString = (dateStr: string | undefined): Date | null => {
         if (!dateStr || typeof dateStr !== 'string') return null;
         let date = new Date(dateStr);
@@ -540,18 +531,14 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         return null;
     };
 
-    // FIX: Updated helper functions to accept the parsed Date object, avoiding redundant parsing and improving type safety.
-    const isExpiringSoon = (expDate: Date | null): boolean => { 
-        if (!expDate) return false;
+    const isExpiringSoon = (expDate: Date): boolean => { 
         const today = new Date();
         const thirtyDaysFromNow = new Date();
         thirtyDaysFromNow.setDate(today.getDate() + 30);
         return expDate > today && expDate <= thirtyDaysFromNow;
     }
     
-    // FIX: Updated helper functions to accept the parsed Date object, avoiding redundant parsing and improving type safety.
-     const isExpired = (expDate: Date | null): boolean => { 
-        if (!expDate) return false;
+     const isExpired = (expDate: Date): boolean => { 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         return expDate < today;
@@ -563,9 +550,9 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         const date = parseDateString(dateStr);
         if (!date) return <span className="font-semibold flex items-center gap-1.5 text-red-500"><Icon name="TriangleAlert" size={16} /> Data Inválida</span>;
         
-        // FIX: Pass the parsed Date object to the helper functions to fix the type error and improve efficiency.
+        // FIX: Pass the parsed Date object to the helper functions.
         const expiring = isExpiringSoon(date);
-        // FIX: Pass the parsed Date object to the helper functions to fix the type error and improve efficiency.
+        // FIX: Pass the parsed Date object to the helper functions.
         const expired = isExpired(date);
         const color = expired ? 'text-red-500 dark:text-red-400' : expiring ? 'text-yellow-500 dark:text-yellow-400' : '';
         const icon = expired ? 'TriangleAlert' : expiring ? 'Timer' : null;
