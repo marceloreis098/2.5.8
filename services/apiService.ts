@@ -60,6 +60,14 @@ export const deleteEquipment = (id: number, username: string): Promise<void> => 
     return apiRequest(`/equipment/${id}`, { method: 'DELETE', body: JSON.stringify({ username }) });
 };
 
+export const importEquipment = (data: Omit<Equipment, 'id'>[], username: string): Promise<{success: boolean, message: string}> => {
+    return apiRequest('/equipment/import', { method: 'POST', body: JSON.stringify({ equipmentList: data, username }) });
+}
+
+export const periodicUpdateEquipment = (data: Omit<Equipment, 'id'>[], username: string): Promise<{success: boolean, message: string}> => {
+    return apiRequest('/equipment/periodic-update', { method: 'POST', body: JSON.stringify({ equipmentList: data, username }) });
+}
+
 export const getLicenses = (user: User): Promise<License[]> => {
     return apiRequest(`/licenses?userId=${user.id}&role=${user.role}`);
 };
@@ -124,10 +132,6 @@ export const renameProduct = (oldName: string, newName: string, username: string
     return apiRequest('/licenses/rename-product', { method: 'POST', body: JSON.stringify({ oldName, newName, username }) });
 };
 
-export const importEquipment = (data: Omit<Equipment, 'id'>[], username: string): Promise<{success: boolean, message: string}> => {
-    return apiRequest('/equipment/import', { method: 'POST', body: JSON.stringify({ equipmentList: data, username }) });
-}
-
 export interface LicenseImportData {
     productName: string;
     licenses: Omit<License, 'id' | 'produto'>[];
@@ -160,8 +164,7 @@ export const getSettings = (): Promise<AppSettings> => {
     return apiRequest('/settings');
 };
 
-// Updated return type to match the new JSON response from backend
-export const saveSettings = (settings: AppSettings, username: string): Promise<{ success: boolean; message: string; lastAbsoluteUpdateTimestamp?: string }> => {
+export const saveSettings = (settings: AppSettings, username: string): Promise<{ success: boolean; message: string; lastAbsoluteUpdateTimestamp?: string; hasInitialConsolidationRun?: boolean; }> => {
     return apiRequest('/settings', { method: 'POST', body: JSON.stringify({ settings, username }) });
 };
 
