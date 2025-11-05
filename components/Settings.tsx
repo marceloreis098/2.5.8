@@ -3,8 +3,7 @@ import { User, UserRole, AppSettings, License } from '../types';
 import Icon from './common/Icon';
 import { getSettings, saveSettings, checkApiStatus, checkDatabaseBackupStatus, backupDatabase, restoreDatabase, clearDatabase, getLicenseTotals, getLicenses } from '../services/apiService';
 import DataConsolidation from './DataConsolidation';
-import LicenseImport from './LicenseImport';
-import PeriodicAbsoluteUpdate from './PeriodicAbsoluteUpdate'; // Novo import
+import LicenseImport from './LicenseImport'; // Novo import
 
 interface SettingsProps {
     currentUser: User;
@@ -109,7 +108,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
         isSsoEnabled: false,
         is2faEnabled: false,
         require2fa: false,
-        hasInitialConsolidationRun: false,
     });
     const [termoEntregaTemplate, setTermoEntregaTemplate] = useState('');
     const [termoDevolucaoTemplate, setTermoDevolucaoTemplate] = useState('');
@@ -162,7 +160,6 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                     isSsoEnabled: data.isSsoEnabled || false,
                     is2faEnabled: data.is2faEnabled || false,
                     require2fa: data.require2fa || false,
-                    hasInitialConsolidationRun: data.hasInitialConsolidationRun || false,
                 });
                 setTermoEntregaTemplate(data.termo_entrega_template || DEFAULT_ENTREGA_TEMPLATE);
                 setTermoDevolucaoTemplate(data.termo_devolucao_template || DEFAULT_DEVOLUCAO_TEMPLATE);
@@ -459,6 +456,15 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                                             </div>
                                         </div>
     
+                                        <div>
+                                            <h4 className="font-semibold text-gray-800 dark:text-dark-text-primary">Opção 1: Upload de Metadados</h4>
+                                            <p className="text-sm text-gray-500 dark:text-dark-text-secondary mt-1 mb-3">Faça o upload do arquivo XML de metadados do seu provedor de identidade para preencher os campos automaticamente.</p>
+                                            <input type="file" accept=".xml, text/xml" onChange={handleMetadataUpload} id="metadata-upload" className="hidden" />
+                                            <label htmlFor="metadata-upload" className="cursor-pointer inline-flex items-center gap-2 bg-brand-secondary text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+                                                <Icon name="UploadCloud" size={18} /> Carregar Arquivo XML
+                                            </label>
+                                        </div>
+    
                                         <div className="relative flex items-center">
                                             <div className="flex-grow border-t dark:border-dark-border"></div>
                                             <span className="flex-shrink mx-4 text-gray-400 dark:text-dark-text-secondary text-sm">OU</span>
@@ -690,19 +696,9 @@ const Settings: React.FC<SettingsProps> = ({ currentUser }) => {
                     )}
                     
                     {activeSettingsTab === 'import' && currentUser.role === UserRole.Admin && (
-                         <div className="space-y-8">
-                            {!settings.hasInitialConsolidationRun ? (
-                                <DataConsolidation 
-                                    currentUser={currentUser} 
-                                    onImportSuccess={fetchAllData} 
-                                />
-                            ) : (
-                                <PeriodicAbsoluteUpdate 
-                                    currentUser={currentUser} 
-                                    onUpdateSuccess={fetchAllData} 
-                                />
-                            )}
-                             <LicenseImport 
+                        <div>
+                            <DataConsolidation currentUser={currentUser} />
+                            <LicenseImport 
                                 currentUser={currentUser} 
                                 productNames={productNames} 
                                 onImportSuccess={fetchAllData}

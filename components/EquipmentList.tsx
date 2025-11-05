@@ -1,10 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Equipment, User, UserRole, EquipmentHistory, AppSettings } from '../types';
+import { Equipment, User, UserRole, EquipmentHistory } from '../types';
 import Icon from './common/Icon';
 import { QRCodeCanvas as QRCode } from 'qrcode.react';
-import { getEquipment, getEquipmentHistory, addEquipment, updateEquipment, deleteEquipment, getSettings } from '../services/apiService';
+import { getEquipment, getEquipmentHistory, addEquipment, updateEquipment, deleteEquipment } from '../services/apiService';
 import TermoResponsabilidade from './TermoResponsabilidade';
-import PeriodicUpdateModal from './PeriodicUpdateModal'; // Novo import
 
 const StatusBadge: React.FC<{ status: Equipment['approval_status'], reason?: string }> = ({ status, reason }) => {
     if (!status || status === 'approved') return null;
@@ -499,12 +498,10 @@ interface EquipmentListProps {
 const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName }) => {
     const [equipment, setEquipment] = useState<Equipment[]>([]);
     const [loading, setLoading] = useState(true);
-    const [settings, setSettings] = useState<Partial<AppSettings>>({});
     const [searchTerm, setSearchTerm] = useState('');
     const [isFormModalOpen, setIsFormModalOpen] = useState(false);
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-    const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
     const [editingEquipment, setEditingEquipment] = useState<Equipment | null>(null);
     const [viewingEquipment, setViewingEquipment] = useState<Equipment | null>(null);
     const [filterStatus, setFilterStatus] = useState<string>('');
@@ -515,24 +512,20 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
     const [devolucaoEquipment, setDevolucaoEquipment] = useState<Equipment | null>(null);
 
 
-    const loadData = async () => {
+    const loadEquipment = async () => {
         setLoading(true);
         try {
-            const [equipmentData, settingsData] = await Promise.all([
-                getEquipment(currentUser),
-                getSettings()
-            ]);
-            setEquipment(equipmentData);
-            setSettings(settingsData);
+            const data = await getEquipment(currentUser);
+            setEquipment(data);
         } catch (error) {
-            console.error("Failed to load equipment data", error);
+            console.error("Failed to load equipment", error);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        loadData();
+        loadEquipment();
     }, [currentUser]);
 
     const handleOpenFormModal = (item: Equipment | null = null) => {
@@ -587,7 +580,7 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
 
         try {
             await updateEquipment(updatedEquipment, currentUser.username);
-            loadData();
+            loadEquipment();
             setEntregaEquipment(null);
             setTermoData({ equipment: updatedEquipment, type: 'entrega' });
         } catch (error) {
@@ -609,7 +602,7 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
 
         try {
             await updateEquipment(updatedEquipment, currentUser.username);
-            loadData();
+            loadEquipment();
             setDevolucaoEquipment(null);
             setTermoData({ equipment: updatedEquipment, type: 'devolucao' });
         } catch (error) {
@@ -620,7 +613,7 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
 
 
     const handleSave = () => {
-        loadData();
+        loadEquipment();
         handleCloseFormModal();
         handleCloseDetailModal(); // Close detail if opened from it
     };
@@ -629,7 +622,7 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
         if (!window.confirm("Tem certeza que deseja excluir este equipamento?")) return;
         try {
             await deleteEquipment(id, currentUser.username);
-            loadData();
+            loadEquipment();
             handleCloseDetailModal(); // Close detail after deleting
         } catch (error) {
             console.error("Failed to delete equipment", error);
@@ -670,11 +663,9 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
         return ['', ...Array.from(grupos)].sort();
     }, [equipment]);
 
-    const isAdmin = currentUser.role === UserRole.Admin;
-    const canShowPeriodicUpdateButton = isAdmin && settings.hasInitialConsolidationRun;
+    const isAdminOrUserManager = currentUser.role === UserRole.Admin || currentUser.role === UserRole.UserManager;
 
     const ActionButtons: React.FC<{ item: Equipment }> = ({ item }) => {
-        const isAdminOrUserManager = currentUser.role === UserRole.Admin || currentUser.role === UserRole.UserManager;
         const isOwner = currentUser.id === item.created_by_id;
         const canEdit = (isAdminOrUserManager && item.approval_status !== 'rejected') || (isOwner && item.approval_status === 'pending_approval');
         const canDelete = isAdminOrUserManager || (isOwner && item.approval_status === 'pending_approval');
@@ -782,16 +773,9 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
         <div className="bg-white dark:bg-dark-card p-4 sm:p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
                 <h2 className="text-2xl font-bold text-brand-dark dark:text-dark-text-primary">Inventário de Equipamentos</h2>
-                <div className="flex flex-wrap gap-2 self-start sm:self-center">
-                    {canShowPeriodicUpdateButton && (
-                        <button onClick={() => setIsUpdateModalOpen(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2">
-                            <Icon name="RefreshCcw" size={18} /> Atualização Periódica (CSV)
-                        </button>
-                    )}
-                    <button onClick={() => handleOpenFormModal()} className="bg-brand-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
-                        <Icon name="CirclePlus" size={18}/> Novo Equipamento
-                    </button>
-                </div>
+                <button onClick={() => handleOpenFormModal()} className="bg-brand-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2 self-start sm:self-center">
+                    <Icon name="CirclePlus" size={18}/> Novo Equipamento
+                </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
@@ -898,7 +882,6 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
             {termoData && <TermoResponsabilidade equipment={termoData.equipment} user={currentUser} onClose={handleCloseTermo} companyName={companyName} termoType={termoData.type} />}
             {entregaEquipment && <EntregaEquipamentoModal equipment={entregaEquipment} onClose={() => setEntregaEquipment(null)} onSave={handleSaveEntrega} />}
             {devolucaoEquipment && <DevolucaoEquipamentoModal equipment={devolucaoEquipment} onClose={() => setDevolucaoEquipment(null)} onConfirm={handleConfirmDevolucao} />}
-            {isUpdateModalOpen && <PeriodicUpdateModal currentUser={currentUser} onClose={() => setIsUpdateModalOpen(false)} onUpdateSuccess={loadData} />}
         </div>
     );
 };

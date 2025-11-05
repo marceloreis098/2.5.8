@@ -1,1258 +1,1049 @@
-const express = require('express');
-const cors = require('cors');
-const mysql = require('mysql2/promise');
-const path = require('path');
-const fs = require('fs').promises;
 require('dotenv').config();
+const express = require('express');
+const mysql = require('mysql2');
+const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const { authenticator } = require('otplib');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' })); // Increase limit for photo uploads
+app.use(express.urlencoded({ extended: true })); // Add this to parse form data from SAML IdP
 
-const dbConfig = {
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE,
+const PORT = process.env.API_PORT || 3001;
+const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10');
+
+// Database credentials from .env
+const DB_HOST = process.env.DB_HOST;
+const DB_USER = process.env.DB_USER;
+const DB_PASSWORD = process.env.DB_PASSWORD;
+const DB_DATABASE = process.env.DB_DATABASE;
+
+// Backup directory setup
+const BACKUP_DIR = './backups';
+if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR);
+}
+
+// --- DATABASE CONNECTION & MIGRATIONS ---
+
+const db = mysql.createPool({
+    host: DB_HOST,
+    user: DB_USER,
+    password: DB_PASSWORD,
+    database: DB_DATABASE,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
-};
+    queueLimit: 0,
+    multipleStatements: true // Important for migrations
+});
 
-let db;
-
-const MIGRATIONS_TABLE = `
-    CREATE TABLE IF NOT EXISTS migrations (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        migration_number INT NOT NULL UNIQUE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-`;
-
-const MIGRATION_1 = `
-    CREATE TABLE IF NOT EXISTS equipment (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        equipamento VARCHAR(255) NOT NULL,
-        garantia VARCHAR(255),
-        patrimonio VARCHAR(255) UNIQUE,
-        serial VARCHAR(255) UNIQUE,
-        usuarioAtual VARCHAR(255),
-        usuarioAnterior VARCHAR(255),
-        local VARCHAR(255),
-        setor VARCHAR(255),
-        dataEntregaUsuario DATE,
-        status VARCHAR(255),
-        dataDevolucao DATE,
-        tipo VARCHAR(255),
-        notaCompra VARCHAR(255),
-        notaPlKm VARCHAR(255),
-        termoResponsabilidade VARCHAR(255),
-        foto LONGTEXT,
-        qrCode VARCHAR(255)
-    );
-`;
-
-const MIGRATION_2 = `
-    CREATE TABLE IF NOT EXISTS licenses (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        produto VARCHAR(255) NOT NULL,
-        tipoLicenca VARCHAR(255),
-        chaveSerial VARCHAR(255) NOT NULL,
-        dataExpiracao DATE,
-        usuario VARCHAR(255) NOT NULL,
-        cargo VARCHAR(255),
-        setor VARCHAR(255),
-        gestor VARCHAR(255),
-        centroCusto VARCHAR(255),
-        contaRazao VARCHAR(255),
-        nomeComputador VARCHAR(255),
-        numeroChamado VARCHAR(255),
-        observacoes TEXT
-    );
-`;
-
-const MIGRATION_3 = `
-    CREATE TABLE IF NOT EXISTS equipment_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        equipment_id INT NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        changedBy VARCHAR(255) NOT NULL,
-        changeType VARCHAR(255) NOT NULL,
-        from_value TEXT,
-        to_value TEXT,
-        FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE
-    );
-`;
-
-const MIGRATION_4 = `
-    ALTER TABLE equipment ADD COLUMN brand VARCHAR(255), ADD COLUMN model VARCHAR(255), ADD COLUMN observacoes TEXT;
-`;
-
-const MIGRATION_5 = `
-    CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(255) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        role ENUM('Admin', 'User Manager', 'User') NOT NULL,
-        lastLogin TIMESTAMP NULL
-    );
-`;
-
-const MIGRATION_6 = `
-    INSERT INTO users (username, password, role) VALUES ('admin', '${bcrypt.hashSync('marceloadmin', 10)}', 'Admin')
-    ON DUPLICATE KEY UPDATE username=username;
-`;
-
-const MIGRATION_7 = `
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(255) NOT NULL,
-        action_type VARCHAR(50) NOT NULL,
-        target_type VARCHAR(50),
-        target_id VARCHAR(255),
-        details TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-`;
-const MIGRATION_8 = `
-    ALTER TABLE equipment ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved', ADD COLUMN rejection_reason TEXT;
-`;
-
-const MIGRATION_9 = `
-    ALTER TABLE licenses ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved', ADD COLUMN rejection_reason TEXT;
-`;
-
-const MIGRATION_10 = `
-    ALTER TABLE equipment ADD COLUMN created_by_id INT, ADD CONSTRAINT fk_equipment_user FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
-`;
-
-const MIGRATION_11 = `
-    ALTER TABLE licenses ADD COLUMN created_by_id INT, ADD CONSTRAINT fk_license_user FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
-`;
-
-const MIGRATION_12 = `
-    ALTER TABLE users ADD COLUMN is2FAEnabled BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN twoFASecret VARCHAR(255);
-`;
-
-const MIGRATION_13 = `
-    ALTER TABLE users ADD COLUMN realName VARCHAR(255) NOT NULL DEFAULT 'Usuário Padrão';
-`;
-const MIGRATION_14 = `
-    UPDATE users SET realName = username WHERE realName = 'Usuário Padrão';
-`;
-const MIGRATION_15 = `
-    ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT 'user@example.com';
-`;
-const MIGRATION_16 = `
-    CREATE TABLE IF NOT EXISTS license_totals (
-        product_name VARCHAR(255) PRIMARY KEY,
-        total_licenses INT NOT NULL DEFAULT 0
-    );
-`;
-const MIGRATION_17 = `
-    ALTER TABLE users ADD COLUMN avatarUrl TEXT;
-`;
-
-const MIGRATION_18 = `
-    CREATE TABLE IF NOT EXISTS app_config (
-        config_key VARCHAR(255) PRIMARY KEY,
-        config_value TEXT
-    );
-`;
-const MIGRATION_19 = `
-    ALTER TABLE equipment ADD COLUMN emailColaborador VARCHAR(255);
-`;
-const MIGRATION_20 = `
-    ALTER TABLE equipment 
-        ADD COLUMN identificador VARCHAR(255),
-        ADD COLUMN nomeSO VARCHAR(255),
-        ADD COLUMN memoriaFisicaTotal VARCHAR(255),
-        ADD COLUMN grupoPoliticas VARCHAR(255),
-        ADD COLUMN pais VARCHAR(255),
-        ADD COLUMN cidade VARCHAR(255),
-        ADD COLUMN estadoProvincia VARCHAR(255),
-        ADD COLUMN condicaoTermo ENUM('Assinado - Entrega', 'Assinado - Devolução', 'Pendente', 'N/A') DEFAULT 'N/A';
-`;
-const MIGRATION_21 = `
-    INSERT INTO app_config (config_key, config_value) VALUES ('hasInitialConsolidationRun', 'false') ON DUPLICATE KEY UPDATE config_key=config_key;
-`;
-
-
-const logAction = async (username, action_type, target_type, target_id, details, connection) => {
-    const dbConnection = connection || db;
+const runMigrations = async () => {
+    console.log("Checking database migrations...");
+    let connection;
     try {
-        await dbConnection.query(
-            "INSERT INTO audit_log (username, action_type, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)",
-            [username, action_type, target_type, target_id, details]
-        );
-    } catch (error) {
-        console.error("Failed to log action:", error);
-    }
-};
+        connection = await db.promise().getConnection();
+        console.log("Database connection for migration successful.");
 
-const runMigration = async (migrationNumber, query) => {
-    const [rows] = await db.query('SELECT 1 FROM migrations WHERE migration_number = ?', [migrationNumber]);
-    if (rows.length === 0) {
-        try {
-            console.log(`Running migration ${migrationNumber}...`);
-            await db.query(query);
-            await db.query('INSERT INTO migrations (migration_number) VALUES (?)', [migrationNumber]);
-            console.log(`Migration ${migrationNumber} completed.`);
-        } catch (error) {
-            // Ignore "Duplicate column name" error, which means the migration partially ran before
-            if (error.code !== 'ER_DUP_FIELDNAME' && error.code !== 'ER_DUP_KEYNAME') {
-                console.error(`Error running migration ${migrationNumber}:`, error);
-                throw error;
-            } else {
-                 console.log(`Migration ${migrationNumber} already applied (column exists). Skipping.`);
-                 // Still record that it's "run" to prevent future attempts
-                 await db.query('INSERT INTO migrations (migration_number) VALUES (?)', [migrationNumber]);
+        // Migration table itself
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS migrations (
+                id INT PRIMARY KEY
+            );
+        `);
+
+        const [executedRows] = await connection.query('SELECT id FROM migrations');
+        const executedMigrationIds = new Set(executedRows.map((r) => r.id));
+
+        const migrations = [
+            {
+                id: 1, sql: `
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(255) NOT NULL UNIQUE,
+                    realName VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL UNIQUE,
+                    password VARCHAR(255) NOT NULL,
+                    role ENUM('Admin', 'User Manager', 'User') NOT NULL,
+                    lastLogin DATETIME,
+                    is2FAEnabled BOOLEAN DEFAULT FALSE,
+                    twoFASecret VARCHAR(255),
+                    ssoProvider VARCHAR(50) NULL,
+                    avatarUrl MEDIUMTEXT
+                );`
+            },
+            {
+                id: 2, sql: `
+                CREATE TABLE IF NOT EXISTS equipment (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    equipamento VARCHAR(255) NOT NULL,
+                    garantia VARCHAR(255),
+                    patrimonio VARCHAR(255) UNIQUE,
+                    serial VARCHAR(255) UNIQUE,
+                    usuarioAtual VARCHAR(255),
+                    usuarioAnterior VARCHAR(255),
+                    local VARCHAR(255),
+                    setor VARCHAR(255),
+                    dataEntregaUsuario VARCHAR(255),
+                    status VARCHAR(255),
+                    dataDevolucao VARCHAR(255),
+                    tipo VARCHAR(255),
+                    notaCompra VARCHAR(255),
+                    notaPlKm VARCHAR(255),
+                    termoResponsabilidade VARCHAR(255),
+                    foto TEXT,
+                    qrCode TEXT,
+                    brand VARCHAR(255),
+                    2FASecret VARCHAR(255),
+                    model VARCHAR(255),
+                    observacoes TEXT,
+                    approval_status VARCHAR(50) DEFAULT 'approved',
+                    rejection_reason TEXT
+                );`
+            },
+            {
+                id: 3, sql: `
+                CREATE TABLE IF NOT EXISTS licenses (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    produto VARCHAR(255) NOT NULL,
+                    tipoLicenca VARCHAR(255),
+                    chaveSerial VARCHAR(255) NOT NULL,
+                    dataExpiracao VARCHAR(255),
+                    usuario VARCHAR(255) NOT NULL,
+                    cargo VARCHAR(255),
+                    setor VARCHAR(255),
+                    gestor VARCHAR(255),
+                    centroCusto VARCHAR(255),
+                    contaRazao VARCHAR(255),
+                    nomeComputador VARCHAR(255),
+                    numeroChamado VARCHAR(255),
+                    observacoes TEXT,
+                    approval_status VARCHAR(50) DEFAULT 'approved',
+                    rejection_reason TEXT
+                );`
+            },
+            {
+                id: 4, sql: `
+                CREATE TABLE IF NOT EXISTS equipment_history (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    equipment_id INT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    changedBy VARCHAR(255),
+                    changeType VARCHAR(255),
+                    from_value TEXT,
+                    to_value TEXT,
+                    FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE
+                );`
+            },
+            {
+                id: 5, sql: `
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    username VARCHAR(255),
+                    action_type VARCHAR(255),
+                    target_type VARCHAR(255),
+                    target_id VARCHAR(255),
+                    details TEXT
+                );`
+            },
+            {
+                id: 6, sql: `
+                CREATE TABLE IF NOT EXISTS app_config (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    config_key VARCHAR(255) NOT NULL UNIQUE,
+                    config_value TEXT
+                );`
+            },
+            {
+                id: 7, sql: `INSERT IGNORE INTO users (username, realName, email, password, role) VALUES ('admin', 'Admin', 'admin@example.com', '${bcrypt.hashSync("marceloadmin", SALT_ROUNDS)}', 'Admin');`
+            },
+            {
+                id: 8, sql: `
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('companyName', 'MRR INFORMATICA');
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('isSsoEnabled', 'false');
+                `
+            },
+            { id: 9, sql: "ALTER TABLE equipment ADD COLUMN emailColaborador VARCHAR(255);" },
+            { id: 10, sql: `
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('termo_entrega_template', NULL);
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('termo_devolucao_template', NULL);
+            `},
+            { id: 11, sql: "ALTER TABLE users ADD COLUMN avatarUrl MEDIUMTEXT;" },
+            { id: 12, sql: "ALTER TABLE users MODIFY COLUMN avatarUrl MEDIUMTEXT;" },
+            { id: 13, sql: "ALTER TABLE licenses ADD COLUMN created_by_id INT NULL;"}, // Add created_by_id for approval flow
+            { id: 14, sql: "ALTER TABLE equipment ADD COLUMN created_by_id INT NULL;"}, // Add created_by_id for approval flow
+            {
+                id: 15, sql: `
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('is2faEnabled', 'false');
+                INSERT IGNORE INTO app_config (config_key, config_value) VALUES ('require2fa', 'false');
+                `
+            },
+            { // Migration 16: Remove UNIQUE from patrimonio, make serial NOT NULL, remove 2FASecret from equipment
+                id: 16, sql: `
+                ALTER TABLE equipment DROP INDEX IF EXISTS patrimonio; -- Use IF EXISTS for robustness
+                ALTER TABLE equipment MODIFY COLUMN patrimonio VARCHAR(255) NULL;
+                ALTER TABLE equipment MODIFY COLUMN serial VARCHAR(255) NOT NULL;
+                ALTER TABLE equipment DROP COLUMN IF EXISTS 2FASecret;
+                `
+            },
+            { // Migration 17: Add new fields for detailed equipment information
+                id: 17, sql: `
+                ALTER TABLE equipment ADD COLUMN identificador VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN nomeSO VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN memoriaFisicaTotal VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN grupoPoliticas VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN pais VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN cidade VARCHAR(255) NULL;
+                ALTER TABLE equipment ADD COLUMN estadoProvincia VARCHAR(255) NULL;
+                `
+            },
+            { // Migration 18: Add field for responsibility agreement condition
+                id: 18, sql: `
+                ALTER TABLE equipment ADD COLUMN condicaoTermo VARCHAR(50) NULL;
+                `
+            },
+            { // Migration 19: Set status to 'Em Uso' for equipment with a current user
+                id: 19, sql: `
+                UPDATE equipment SET status = 'Em Uso' WHERE usuarioAtual IS NOT NULL AND usuarioAtual != '';
+                `
             }
+        ];
+        
+        const migrationsToRun = migrations.filter(m => !executedMigrationIds.has(m.id));
+
+        if (migrationsToRun.length > 0) {
+            console.log('New migrations to run:', migrationsToRun.map(m => m.id));
+            await connection.beginTransaction();
+            try {
+                for (const migration of migrationsToRun) {
+                    console.log(`Running migration ${migration.id}...`);
+                    try {
+                        await connection.query(migration.sql);
+                    } catch (err) {
+                        // MySQL error for duplicate column. MariaDB uses the same.
+                        if (err.code === 'ER_DUP_FIELDNAME' || err.code === 'ER_DUP_KEYNAME' || err.code === 'ER_MULTIPLE_PRI_KEY' || err.code === 'ER_CANT_DROP_FIELD_OR_KEY') {
+                            console.warn(`[MIGRATION WARN] Migration ${migration.id} failed because column/key already exists or cannot be dropped. Assuming it was applied. Marking as run.`);
+                        } else {
+                            // For other errors, we should fail loudly.
+                            throw err;
+                        }
+                    }
+                    await connection.query('INSERT INTO migrations (id) VALUES (?)', [migration.id]);
+                }
+                await connection.commit();
+                console.log("All new migrations applied successfully.");
+            } catch (err) {
+                console.error("Error during migration, rolling back.", err);
+                await connection.rollback();
+                throw err; // Propagate error to stop server startup
+            }
+        } else {
+            console.log("Database schema is up to date.");
         }
+    } finally {
+        if (connection) connection.release();
     }
 };
 
-const initializeDatabase = async () => {
+const logAction = (username, action_type, target_type, target_id, details) => {
+    const sql = "INSERT INTO audit_log (username, action_type, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)";
+    db.query(sql, [username, action_type, target_type, target_id, details], (err) => {
+        if (err) console.error("Failed to log action:", err);
+    });
+};
+
+const recordHistory = async (equipmentId, changedBy, changes) => {
+    if (changes.length === 0) return;
+    const conn = await db.promise().getConnection();
     try {
-        const tempConnection = await mysql.createConnection({ ...dbConfig, database: null });
-        await tempConnection.query(`CREATE DATABASE IF NOT EXISTS ${dbConfig.database}`);
-        await tempConnection.end();
-
-        db = await mysql.createPool(dbConfig);
-        console.log('Connected to the database.');
-
-        await db.query(MIGRATIONS_TABLE);
-        await runMigration(1, MIGRATION_1);
-        await runMigration(2, MIGRATION_2);
-        await runMigration(3, MIGRATION_3);
-        await runMigration(4, MIGRATION_4);
-        await runMigration(5, MIGRATION_5);
-        await runMigration(6, MIGRATION_6);
-        await runMigration(7, MIGRATION_7);
-        await runMigration(8, MIGRATION_8);
-        await runMigration(9, MIGRATION_9);
-        await runMigration(10, MIGRATION_10);
-        await runMigration(11, MIGRATION_11);
-        await runMigration(12, MIGRATION_12);
-        await runMigration(13, MIGRATION_13);
-        await runMigration(14, MIGRATION_14);
-        await runMigration(15, MIGRATION_15);
-        await runMigration(16, MIGRATION_16);
-        await runMigration(17, MIGRATION_17);
-        await runMigration(18, MIGRATION_18);
-        await runMigration(19, MIGRATION_19);
-        await runMigration(20, MIGRATION_20);
-        await runMigration(21, MIGRATION_21);
-
+        await conn.beginTransaction();
+        for (const change of changes) {
+            const { field, oldValue, newValue } = change;
+            await conn.query(
+                'INSERT INTO equipment_history (equipment_id, changedBy, changeType, from_value, to_value) VALUES (?, ?, ?, ?, ?)',
+                [equipmentId, changedBy, field, oldValue, newValue]
+            );
+        }
+        await conn.commit();
     } catch (error) {
-        console.error('Database initialization failed:', error);
-        process.exit(1);
+        await conn.rollback();
+        console.error("Failed to record history:", error);
+    } finally {
+        conn.release();
     }
 };
 
-// Simple endpoint to check API status
+
+// Middleware to check Admin role
+const isAdmin = async (req, res, next) => {
+    const username = req.body.username;
+    if (!username) return res.status(401).json({ message: "Authentication required" });
+
+    try {
+        const [rows] = await db.promise().query('SELECT role FROM users WHERE username = ?', [username]);
+        if (rows.length === 0 || rows[0].role !== 'Admin') {
+            return res.status(403).json({ message: "Access denied. Admin privileges required." });
+        }
+        req.userRole = rows[0].role;
+        next();
+    } catch (error) {
+        console.error("Error checking admin role:", error);
+        res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+// --- API ENDPOINTS ---
+
+// GET / - Health Check
 app.get('/api', (req, res) => {
-    res.json({ message: 'API is running' });
+    res.json({ message: "Inventario Pro API is running!" });
 });
 
+// POST /api/login
 app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
     try {
-        const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
-        if (rows.length === 0) {
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
-        const user = rows[0];
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-        if (!isPasswordValid) {
-            return res.status(401).json({ message: 'Invalid credentials' });
-        }
-        
-        const [settingsRows] = await db.query("SELECT * FROM app_config WHERE config_key = 'require2fa'");
-        const require2fa = settingsRows.length > 0 && settingsRows[0].config_value === 'true';
+        const { username, password, ssoToken } = req.body;
 
-        if (require2fa && !user.is2FAEnabled) {
-             const { password, twoFASecret, ...userResponse } = user;
-             return res.json({ ...userResponse, requires2FASetup: true });
+        if (ssoToken) {
+            // This is a placeholder for a real SSO token validation logic
+            // In a real scenario, you'd verify the token with the IdP's public key
+            // and extract user information from it.
+            return res.status(501).json({ message: "SSO token validation not implemented." });
         }
 
-        await db.query('UPDATE users SET lastLogin = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-        
-        await logAction(username, 'LOGIN', 'USER', user.id, 'User logged in successfully');
-        
-        const { password: userPassword, twoFASecret, ...userResponse } = user;
-        res.json(userResponse);
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        // Standard Login
+        const [results] = await db.promise().query("SELECT * FROM users WHERE username = ?", [username]);
+
+        if (results.length > 0) {
+            const user = results[0];
+            const passwordIsValid = bcrypt.compareSync(password, user.password);
+
+            if (passwordIsValid) {
+                const [settingsRows] = await db.promise().query("SELECT config_key, config_value FROM app_config WHERE config_key IN ('is2faEnabled', 'require2fa')");
+                const settings = settingsRows.reduce((acc, row) => {
+                    acc[row.config_key] = row.config_value === 'true';
+                    return acc;
+                }, {});
+
+                if (settings.is2faEnabled && settings.require2fa && !user.is2FAEnabled && user.username !== 'admin' && !user.ssoProvider) {
+                    logAction(username, 'LOGIN_SUCCESS', 'USER', user.id, 'User requires 2FA setup.');
+                    const userResponse = { ...user, requires2FASetup: true };
+                    delete userResponse.password;
+                    delete userResponse.twoFASecret;
+                    return res.json(userResponse);
+                }
+
+                await db.promise().query("UPDATE users SET lastLogin = NOW() WHERE id = ?", [user.id]);
+                logAction(username, 'LOGIN', 'USER', user.id, 'User logged in successfully');
+
+                const userResponse = { ...user };
+                delete userResponse.password;
+                delete userResponse.twoFASecret;
+
+                res.json(userResponse);
+            } else {
+                res.status(401).json({ message: "Usuário ou senha inválidos" });
+            }
+        } else {
+            res.status(401).json({ message: "Usuário ou senha inválidos" });
+        }
+    } catch (err) {
+        console.error("Login error:", err);
+        return res.status(500).json({ message: "Erro de banco de dados durante o login." });
     }
 });
 
-
-app.post('/api/verify-2fa', async (req, res) => {
-    const { userId, token } = req.body;
+// GET /api/sso/login - Initiates the SAML Single Sign-On flow
+app.get('/api/sso/login', async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
+        const [rows] = await db.promise().query("SELECT config_key, config_value FROM app_config WHERE config_key IN ('isSsoEnabled', 'ssoUrl', 'ssoEntityId')");
+        const settings = rows.reduce((acc, row) => {
+            acc[row.config_key] = row.config_value;
+            return acc;
+        }, {});
+        
+        if (settings.isSsoEnabled !== 'true' || !settings.ssoUrl) {
+            return res.status(400).send('<h1>Erro de Configuração</h1><p>O Login SSO não está habilitado ou a URL do SSO não foi configurada. Por favor, contate o administrador.</p>');
         }
-        const user = rows[0];
-        const isValid = authenticator.verify({ token, secret: user.twoFASecret });
+        
+        const frontendHost = req.hostname;
+        const acsUrl = `http://${frontendHost}:3001/api/sso/callback`;
+        const entityId = settings.ssoEntityId || `http://${frontendHost}:3000`;
+        const requestId = '_' + crypto.randomBytes(20).toString('hex');
+        const issueInstant = new Date().toISOString();
 
+        const samlRequestXml = `
+<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                    ID="${requestId}"
+                    Version="2.0"
+                    IssueInstant="${issueInstant}"
+                    Destination="${settings.ssoUrl}"
+                    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                    AssertionConsumerServiceURL="${acsUrl}">
+  <saml:Issuer>${entityId}</saml:Issuer>
+  <samlp:NameIDPolicy Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+                      AllowCreate="true" />
+</samlp:AuthnRequest>
+        `.trim();
+
+        zlib.deflateRaw(Buffer.from(samlRequestXml), (err, compressed) => {
+            if (err) {
+                console.error("SAML request compression failed:", err);
+                return res.status(500).send("Falha ao construir a solicitação SAML.");
+            }
+            const samlRequest = compressed.toString('base64');
+            const redirectUrl = `${settings.ssoUrl}?SAMLRequest=${encodeURIComponent(samlRequest)}`;
+            res.redirect(redirectUrl);
+        });
+    } catch (error) {
+        console.error("Error during SSO login initiation:", error);
+        res.status(500).send("Erro interno do servidor durante o login SSO.");
+    }
+});
+
+app.post('/api/sso/callback', (req, res) => {
+    // This is a placeholder for handling the SAML response from the IdP
+    // A real implementation would require a SAML library to parse and verify the response.
+    console.log('Received SAML Response:', req.body.SAMLResponse);
+    res.redirect(`http://${req.hostname}:3000?sso_token=dummy_token_for_now`);
+});
+
+// POST /api/verify-2fa
+app.post('/api/verify-2fa', (req, res) => {
+    const { userId, token } = req.body;
+    db.query('SELECT * FROM users WHERE id = ?', [userId], (err, results) => {
+        if (err || results.length === 0) return res.status(500).json({ message: 'User not found' });
+        const user = results[0];
+        const isValid = authenticator.check(token, user.twoFASecret);
         if (isValid) {
-            await db.query('UPDATE users SET lastLogin = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-            await logAction(user.username, 'LOGIN', 'USER', user.id, 'User completed 2FA verification');
-            const { password, twoFASecret, ...userResponse } = user;
+            const userResponse = { ...user };
+            delete userResponse.password;
+            delete userResponse.twoFASecret;
             res.json(userResponse);
         } else {
-            res.status(401).json({ message: 'Invalid 2FA token' });
+            res.status(401).json({ message: 'Código de verificação inválido' });
         }
-    } catch (error) {
-        console.error('2FA verification error:', error);
-        res.status(500).json({ message: 'Internal server error' });
-    }
+    });
 });
 
 
-// GET all equipment
-app.get('/api/equipment', async (req, res) => {
+// GET /api/equipment
+app.get('/api/equipment', (req, res) => {
     const { userId, role } = req.query;
-    try {
-        let query = 'SELECT * FROM equipment';
-        // Non-admins can only see approved items or items they created themselves
-        if (role !== 'Admin') {
-            query += ` WHERE approval_status = 'approved' OR created_by_id = ?`;
-        }
-        const [rows] = await db.query(query, [userId]);
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching equipment:', error);
-        res.status(500).json({ message: 'Error fetching equipment' });
+    let sql = "SELECT * FROM equipment ORDER BY equipamento ASC";
+    let params = [];
+
+    if (role !== 'Admin' && role !== 'User Manager') {
+        sql = `
+            SELECT * FROM equipment 
+            WHERE approval_status = 'approved' OR (created_by_id = ? AND approval_status != 'approved')
+            ORDER BY equipamento ASC
+        `;
+        params = [userId];
     }
+
+    db.query(sql, params, (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        res.json(results);
+    });
 });
 
-app.get('/api/equipment/:id/history', async (req, res) => {
+app.get('/api/equipment/:id/history', (req, res) => {
     const { id } = req.params;
-    try {
-        const [rows] = await db.query(
-            "SELECT id, timestamp, changedBy, changeType, from_value, to_value FROM equipment_history WHERE equipment_id = ? ORDER BY timestamp DESC",
-            [id]
-        );
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching equipment history:', error);
-        res.status(500).json({ message: 'Error fetching equipment history' });
-    }
+    const sql = "SELECT * FROM equipment_history WHERE equipment_id = ? ORDER BY timestamp DESC";
+    db.query(sql, [id], (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        res.json(results);
+    });
 });
 
-// ADD new equipment
 app.post('/api/equipment', async (req, res) => {
     const { equipment, username } = req.body;
-    const connection = await db.getConnection();
+    const { id, qrCode, ...newEquipment } = equipment;
+
     try {
-        await connection.beginTransaction();
-
-        const [userRows] = await connection.query('SELECT id, role FROM users WHERE username = ?', [username]);
-        if (userRows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+        const [userRows] = await db.promise().query('SELECT id, role FROM users WHERE username = ?', [username]);
+        if (userRows.length === 0) return res.status(404).json({ message: "User not found" });
         const user = userRows[0];
-        
-        const approval_status = user.role === 'Admin' ? 'approved' : 'pending_approval';
-        
-        const [serialResult] = await connection.query('SELECT id FROM equipment WHERE serial = ?', [equipment.serial]);
-        if (serialResult.length > 0) {
-            throw new Error(`O Serial "${equipment.serial}" já está cadastrado no sistema.`);
+
+        const [serialCheck] = await db.promise().query('SELECT id FROM equipment WHERE serial = ?', [newEquipment.serial]);
+        if (serialCheck.length > 0) {
+            return res.status(409).json({ message: "Erro: O número de série já está cadastrado no sistema." });
         }
 
-        const [result] = await connection.query(
-            'INSERT INTO equipment (equipamento, patrimonio, serial, brand, model, tipo, status, usuarioAtual, emailColaborador, local, setor, dataEntregaUsuario, approval_status, created_by_id, identificador, nomeSO, memoriaFisicaTotal, grupoPoliticas, pais, cidade, estadoProvincia, condicaoTermo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [equipment.equipamento, equipment.patrimonio, equipment.serial, equipment.brand, equipment.model, equipment.tipo, equipment.status, equipment.usuarioAtual, equipment.emailColaborador, equipment.local, equipment.setor, equipment.dataEntregaUsuario || null, approval_status, user.id, equipment.identificador, equipment.nomeSO, equipment.memoriaFisicaTotal, equipment.grupoPoliticas, equipment.pais, equipment.cidade, equipment.estadoProvincia, equipment.condicaoTermo]
-        );
-        const newEquipmentId = result.insertId;
+        newEquipment.created_by_id = user.id;
+        newEquipment.approval_status = user.role === 'Admin' ? 'approved' : 'pending_approval';
         
-        await logAction(username, 'CREATE', 'EQUIPMENT', newEquipmentId, `Created equipment: ${equipment.equipamento}`, connection);
-
-        await connection.commit();
-        res.status(201).json({ id: newEquipmentId, ...equipment });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error adding equipment:', error);
-        res.status(500).json({ message: error.message || 'Error adding equipment' });
-    } finally {
-        connection.release();
+        const sql = "INSERT INTO equipment SET ?";
+        const [result] = await db.promise().query(sql, newEquipment);
+        
+        const insertedId = result.insertId;
+        const qrCodeValue = JSON.stringify({ id: insertedId, serial: newEquipment.serial, type: 'equipment' });
+        await db.promise().query('UPDATE equipment SET qrCode = ? WHERE id = ?', [qrCodeValue, insertedId]);
+        
+        logAction(username, 'CREATE', 'EQUIPMENT', insertedId, `Created new equipment: ${newEquipment.equipamento}`);
+        
+        const [insertedRow] = await db.promise().query('SELECT * FROM equipment WHERE id = ?', [insertedId]);
+        res.status(201).json(insertedRow[0]);
+    } catch (err) {
+        console.error("Add equipment error:", err);
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
-// UPDATE equipment
 app.put('/api/equipment/:id', async (req, res) => {
     const { id } = req.params;
     const { equipment, username } = req.body;
-    const connection = await db.getConnection();
+
     try {
-        await connection.beginTransaction();
+        const [oldEquipmentRows] = await db.promise().query('SELECT * FROM equipment WHERE id = ?', [id]);
+        if (oldEquipmentRows.length === 0) return res.status(404).json({ message: "Equipment not found" });
+        const oldEquipment = oldEquipmentRows[0];
 
-        const [originalRows] = await connection.query('SELECT * FROM equipment WHERE id = ?', [id]);
-        if (originalRows.length === 0) {
-            return res.status(404).json({ message: 'Equipment not found' });
-        }
-        const original = originalRows[0];
-
-        const changes = [];
-        for (const key in equipment) {
-            if (key !== 'id' && original[key] !== equipment[key]) {
-                changes.push({
-                    equipment_id: id,
-                    changedBy: username,
-                    changeType: key,
-                    from_value: original[key] ? String(original[key]) : null,
-                    to_value: equipment[key] ? String(equipment[key]) : null,
-                });
+        const changes = Object.keys(equipment).reduce((acc, key) => {
+            const oldValue = oldEquipment[key] instanceof Date ? oldEquipment[key].toISOString().split('T')[0] : oldEquipment[key];
+            const newValue = equipment[key];
+            if (String(oldValue || '') !== String(newValue || '')) {
+                acc.push({ field: key, oldValue, newValue });
             }
+            return acc;
+        }, []);
+
+        // Re-generate QR code if serial changes
+        if(equipment.serial && equipment.serial !== oldEquipment.serial) {
+            equipment.qrCode = JSON.stringify({ id: equipment.id, serial: equipment.serial, type: 'equipment' });
         }
+
+        const sql = "UPDATE equipment SET ? WHERE id = ?";
+        await db.promise().query(sql, [equipment, id]);
         
         if (changes.length > 0) {
-            for (const change of changes) {
-                 await connection.query(
-                    'INSERT INTO equipment_history (equipment_id, changedBy, changeType, from_value, to_value) VALUES (?, ?, ?, ?, ?)',
-                    [change.equipment_id, change.changedBy, change.changeType, change.from_value, change.to_value]
-                );
-            }
+            await recordHistory(id, username, changes);
+            logAction(username, 'UPDATE', 'EQUIPMENT', id, `Updated equipment: ${equipment.equipamento}. Changes: ${changes.map(c => c.field).join(', ')}`);
         }
-
-        await connection.query(
-            `UPDATE equipment SET equipamento = ?, patrimonio = ?, serial = ?, brand = ?, model = ?, tipo = ?, status = ?, usuarioAtual = ?, emailColaborador = ?, local = ?, setor = ?, dataEntregaUsuario = ?, dataDevolucao = ?, garantia = ?, notaCompra = ?, notaPlKm = ?, termoResponsabilidade = ?, foto = ?, observacoes = ?, identificador = ?, nomeSO = ?, memoriaFisicaTotal = ?, grupoPoliticas = ?, pais = ?, cidade = ?, estadoProvincia = ?, condicaoTermo = ? WHERE id = ?`,
-            [equipment.equipamento, equipment.patrimonio, equipment.serial, equipment.brand, equipment.model, equipment.tipo, equipment.status, equipment.usuarioAtual, equipment.emailColaborador, equipment.local, equipment.setor, equipment.dataEntregaUsuario || null, equipment.dataDevolucao || null, equipment.garantia, equipment.notaCompra, equipment.notaPlKm, equipment.termoResponsabilidade, equipment.foto, equipment.observacoes, equipment.identificador, equipment.nomeSO, equipment.memoriaFisicaTotal, equipment.grupoPoliticas, equipment.pais, equipment.cidade, equipment.estadoProvincia, equipment.condicaoTermo, id]
-        );
         
-        await logAction(username, 'UPDATE', 'EQUIPMENT', id, `Updated equipment: ${equipment.equipamento}`, connection);
-
-        await connection.commit();
-        res.json({ id, ...equipment });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error updating equipment:', error);
-        res.status(500).json({ message: 'Error updating equipment' });
-    } finally {
-        connection.release();
+        res.json({ ...equipment, id: parseInt(id) });
+    } catch (err) {
+        console.error("Update equipment error:", err);
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
-
-// DELETE equipment
-app.delete('/api/equipment/:id', async (req, res) => {
+app.delete('/api/equipment/:id', (req, res) => {
     const { id } = req.params;
     const { username } = req.body;
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        const [rows] = await connection.query('SELECT equipamento FROM equipment WHERE id = ?', [id]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'Equipment not found' });
+    db.query("SELECT equipamento FROM equipment WHERE id = ?", [id], (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        if (results.length > 0) {
+            const equipName = results[0].equipamento;
+            db.query("DELETE FROM equipment WHERE id = ?", [id], (deleteErr) => {
+                if (deleteErr) return res.status(500).json({ message: "Database error", error: deleteErr });
+                logAction(username, 'DELETE', 'EQUIPMENT', id, `Deleted equipment: ${equipName}`);
+                res.status(204).send();
+            });
+        } else {
+            res.status(404).json({ message: "Equipment not found" });
         }
-        const equipmentName = rows[0].equipamento;
-        
-        await connection.query('DELETE FROM equipment_history WHERE equipment_id = ?', [id]);
-        await connection.query('DELETE FROM equipment WHERE id = ?', [id]);
-        
-        await logAction(username, 'DELETE', 'EQUIPMENT', id, `Deleted equipment: ${equipmentName}`, connection);
-
-        await connection.commit();
-        res.status(204).send();
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error deleting equipment:', error);
-        res.status(500).json({ message: 'Error deleting equipment' });
-    } finally {
-        connection.release();
-    }
+    });
 });
 
-// IMPORT equipment
-app.post('/api/equipment/import', async (req, res) => {
+app.post('/api/equipment/import', isAdmin, async (req, res) => {
     const { equipmentList, username } = req.body;
-    if (!Array.isArray(equipmentList)) {
-        return res.status(400).json({ success: false, message: 'Invalid data format' });
-    }
-    const connection = await db.getConnection();
+    const connection = await db.promise().getConnection();
     try {
         await connection.beginTransaction();
-
         await connection.query('DELETE FROM equipment_history');
         await connection.query('DELETE FROM equipment');
         await connection.query('ALTER TABLE equipment AUTO_INCREMENT = 1');
-
+        
         for (const equipment of equipmentList) {
-            await connection.query(
-                'INSERT INTO equipment (equipamento, patrimonio, serial, brand, model, tipo, status, usuarioAtual, emailColaborador, local, setor, dataEntregaUsuario, approval_status, created_by_id, identificador, nomeSO, memoriaFisicaTotal, grupoPoliticas, pais, cidade, estadoProvincia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [equipment.equipamento, equipment.patrimonio, equipment.serial, equipment.brand, equipment.model, equipment.tipo, equipment.status, equipment.usuarioAtual, equipment.emailColaborador, equipment.local, equipment.setor, equipment.dataEntregaUsuario || null, 'approved', 1, equipment.identificador, equipment.nomeSO, equipment.memoriaFisicaTotal, equipment.grupoPoliticas, equipment.pais, equipment.cidade, equipment.estadoProvincia]
-            );
+            const { id, ...newEquipment } = equipment;
+            const [result] = await connection.query('INSERT INTO equipment SET ?', [newEquipment]);
+            const insertedId = result.insertId;
+            const qrCodeValue = JSON.stringify({ id: insertedId, serial: newEquipment.serial, type: 'equipment' });
+            await connection.query('UPDATE equipment SET qrCode = ? WHERE id = ?', [qrCodeValue, insertedId]);
         }
-        
-        const now = new Date().toISOString();
-        await connection.query("INSERT INTO app_config (config_key, config_value) VALUES ('lastAbsoluteUpdateTimestamp', ?) ON DUPLICATE KEY UPDATE config_value = ?", [now, now]);
-        await connection.query("INSERT INTO app_config (config_key, config_value) VALUES ('hasInitialConsolidationRun', 'true') ON DUPLICATE KEY UPDATE config_value = 'true'");
-
-
-        await logAction(username, 'IMPORT', 'EQUIPMENT', null, `Imported ${equipmentList.length} equipment items.`);
 
         await connection.commit();
-        res.json({ success: true, message: 'Equipment imported successfully' });
-    } catch (error) {
+        logAction(username, 'UPDATE', 'EQUIPMENT', 'ALL', `Replaced entire equipment inventory with ${equipmentList.length} items via consolidation tool.`);
+        res.json({ success: true, message: 'Inventário de equipamentos importado com sucesso.' });
+    } catch (err) {
         await connection.rollback();
-        console.error('Error importing equipment:', error);
-        res.status(500).json({ success: false, message: 'Error importing equipment' });
+        console.error("Equipment import error:", err);
+        res.status(500).json({ success: false, message: `Erro de banco de dados durante a importação: ${err.message}` });
     } finally {
         connection.release();
     }
 });
 
-
-// PERIODIC UPDATE equipment
-app.post('/api/equipment/periodic-update', async (req, res) => {
-    const { equipmentList, username } = req.body;
-    if (!Array.isArray(equipmentList)) {
-        return res.status(400).json({ success: false, message: 'Invalid data format' });
-    }
-
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        const [existingEquipmentRows] = await connection.query('SELECT * FROM equipment');
-        const existingEquipmentMap = new Map(existingEquipmentRows.map(e => [e.serial.toUpperCase(), e]));
-
-        const historyEntries = [];
-        const updatePromises = [];
-        const insertPromises = [];
-
-        for (const item of equipmentList) {
-            const upperSerial = item.serial.toUpperCase();
-            const existing = existingEquipmentMap.get(upperSerial);
-            
-            const newStatus = (item.usuarioAtual || '').trim() !== '' ? 'Em Uso' : 'Estoque';
-
-            if (existing) {
-                const updates = {};
-                let hasChanges = false;
-                
-                // Compare and collect changes
-                Object.keys(item).forEach(key => {
-                    if (key !== 'serial' && item[key] !== existing[key]) {
-                        updates[key] = item[key];
-                        hasChanges = true;
-                        historyEntries.push({ equipment_id: existing.id, changedBy: username, changeType: key, from_value: existing[key], to_value: item[key] });
-                    }
-                });
-                
-                // Also check if status needs to change
-                if (newStatus !== existing.status) {
-                    updates['status'] = newStatus;
-                    if (!hasChanges) { // Avoid duplicate history if status change is the only change
-                        historyEntries.push({ equipment_id: existing.id, changedBy: username, changeType: 'status', from_value: existing.status, to_value: newStatus });
-                    }
-                    hasChanges = true;
-                }
-                
-                if (hasChanges) {
-                     updatePromises.push(connection.query(
-                        'UPDATE equipment SET ? WHERE id = ?',
-                        [updates, existing.id]
-                    ));
-                }
-
-            } else {
-                // New equipment
-                const newItem = { ...item, status: newStatus, approval_status: 'approved', created_by_id: 1 };
-                insertPromises.push(
-                    connection.query('INSERT INTO equipment SET ?', [newItem]).then(result => {
-                        historyEntries.push({ equipment_id: result[0].insertId, changedBy: username, changeType: 'CREATE', from_value: null, to_value: item.equipamento });
-                    })
-                );
-            }
-        }
-        
-        // Execute all database operations
-        await Promise.all([...updatePromises, ...insertPromises]);
-
-        // Bulk insert history
-        if (historyEntries.length > 0) {
-            await connection.query(
-                'INSERT INTO equipment_history (equipment_id, changedBy, changeType, from_value, to_value) VALUES ?',
-                [historyEntries.map(e => [e.equipment_id, e.changedBy, e.changeType, e.from_value, e.to_value])]
-            );
-        }
-
-        const now = new Date().toISOString();
-        await connection.query("INSERT INTO app_config (config_key, config_value) VALUES ('lastAbsoluteUpdateTimestamp', ?) ON DUPLICATE KEY UPDATE config_value = ?", [now, now]);
-
-        await logAction(username, 'IMPORT', 'EQUIPMENT', null, `Periodically updated ${equipmentList.length} equipment items.`);
-        await connection.commit();
-        res.json({ success: true, message: 'Equipment updated successfully' });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error in periodic update:', error);
-        res.status(500).json({ success: false, message: 'Database error during update: ' + error.message });
-    } finally {
-        connection.release();
-    }
-});
-
-
-// GET all licenses
-app.get('/api/licenses', async (req, res) => {
+// --- LICENSES ---
+app.get('/api/licenses', (req, res) => {
     const { userId, role } = req.query;
-    try {
-        let query = 'SELECT * FROM licenses';
-        if (role !== 'Admin') {
-            query += ` WHERE approval_status = 'approved'`; // Non-admins can only see approved licenses
-        }
-        const [rows] = await db.query(query);
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching licenses:', error);
-        res.status(500).json({ message: 'Error fetching licenses' });
+    let sql = "SELECT * FROM licenses ORDER BY produto, usuario ASC";
+    let params = [];
+
+    if (role !== 'Admin') {
+        sql = `
+            SELECT * FROM licenses 
+            WHERE approval_status = 'approved' OR (created_by_id = ? AND approval_status != 'approved')
+            ORDER BY produto, usuario ASC
+        `;
+        params = [userId];
     }
+    
+    db.query(sql, params, (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        res.json(results);
+    });
 });
 
-
-// ADD new license
 app.post('/api/licenses', async (req, res) => {
     const { license, username } = req.body;
-    const connection = await db.getConnection();
+    const { id, ...newLicense } = license;
+
     try {
-        await connection.beginTransaction();
-        const [userRows] = await connection.query('SELECT id, role FROM users WHERE username = ?', [username]);
-        if (userRows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+        const [userRows] = await db.promise().query('SELECT id, role FROM users WHERE username = ?', [username]);
+        if (userRows.length === 0) return res.status(404).json({ message: "User not found" });
         const user = userRows[0];
         
-        const approval_status = user.role === 'Admin' ? 'approved' : 'pending_approval';
+        newLicense.created_by_id = user.id;
+        newLicense.approval_status = user.role === 'Admin' ? 'approved' : 'pending_approval';
 
-        const [result] = await connection.query(
-            'INSERT INTO licenses (produto, tipoLicenca, chaveSerial, dataExpiracao, usuario, cargo, setor, gestor, centroCusto, contaRazao, nomeComputador, numeroChamado, observacoes, approval_status, created_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [license.produto, license.tipoLicenca, license.chaveSerial, license.dataExpiracao || null, license.usuario, license.cargo, license.setor, license.gestor, license.centroCusto, license.contaRazao, license.nomeComputador, license.numeroChamado, license.observacoes, approval_status, user.id]
-        );
+        const sql = "INSERT INTO licenses SET ?";
+        const [result] = await db.promise().query(sql, newLicense);
         
-        const newLicenseId = result.insertId;
-        await logAction(username, 'CREATE', 'LICENSE', newLicenseId, `Created license for product: ${license.produto}`, connection);
-        
-        await connection.commit();
-        res.status(201).json({ id: newLicenseId, ...license });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error adding license:', error);
-        res.status(500).json({ message: 'Error adding license' });
-    } finally {
-        connection.release();
+        logAction(username, 'CREATE', 'LICENSE', result.insertId, `Created new license for product: ${newLicense.produto}`);
+        const [insertedRow] = await db.promise().query('SELECT * FROM licenses WHERE id = ?', [result.insertId]);
+        res.status(201).json(insertedRow[0]);
+    } catch (err) {
+        console.error("Add license error:", err);
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
-
-// UPDATE license
-app.put('/api/licenses/:id', async (req, res) => {
+app.put('/api/licenses/:id', (req, res) => {
     const { id } = req.params;
     const { license, username } = req.body;
-    try {
-        await db.query(
-            'UPDATE licenses SET produto = ?, tipoLicenca = ?, chaveSerial = ?, dataExpiracao = ?, usuario = ?, cargo = ?, setor = ?, gestor = ?, centroCusto = ?, contaRazao = ?, nomeComputador = ?, numeroChamado = ?, observacoes = ? WHERE id = ?',
-            [license.produto, license.tipoLicenca, license.chaveSerial, license.dataExpiracao || null, license.usuario, license.cargo, license.setor, license.gestor, license.centroCusto, license.contaRazao, license.nomeComputador, license.numeroChamado, license.observacoes, id]
-        );
-        await logAction(username, 'UPDATE', 'LICENSE', id, `Updated license for product: ${license.produto}`);
-        res.json({ id, ...license });
-    } catch (error) {
-        console.error('Error updating license:', error);
-        res.status(500).json({ message: 'Error updating license' });
-    }
+    db.query("UPDATE licenses SET ? WHERE id = ?", [license, id], (err) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        logAction(username, 'UPDATE', 'LICENSE', id, `Updated license for product: ${license.produto}`);
+        res.json({ ...license, id: parseInt(id) });
+    });
 });
 
-
-// DELETE license
-app.delete('/api/licenses/:id', async (req, res) => {
+app.delete('/api/licenses/:id', (req, res) => {
     const { id } = req.params;
     const { username } = req.body;
-    try {
-        const [rows] = await db.query('SELECT produto FROM licenses WHERE id = ?', [id]);
-        const productName = rows.length > 0 ? rows[0].produto : `ID ${id}`;
-        
-        await db.query('DELETE FROM licenses WHERE id = ?', [id]);
-
-        await logAction(username, 'DELETE', 'LICENSE', id, `Deleted license for product: ${productName}`);
-        res.status(204).send();
-    } catch (error) {
-        console.error('Error deleting license:', error);
-        res.status(500).json({ message: 'Error deleting license' });
-    }
-});
-
-
-// Endpoint to get all license totals
-app.get('/api/licenses/totals', async (req, res) => {
-    try {
-        const [rows] = await db.query("SELECT product_name, total_licenses FROM license_totals");
-        const totals = rows.reduce((acc, row) => {
-            acc[row.product_name] = row.total_licenses;
-            return acc;
-        }, {});
-        res.json(totals);
-    } catch (error) {
-        console.error('Error fetching license totals:', error);
-        res.status(500).json({ message: 'Error fetching license totals' });
-    }
-});
-
-// Endpoint to save license totals
-app.post('/api/licenses/totals', async (req, res) => {
-    const { totals, username } = req.body;
-    if (!totals || typeof totals !== 'object') {
-        return res.status(400).json({ message: 'Invalid totals data provided' });
-    }
-
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-        
-        await connection.query("DELETE FROM license_totals");
-
-        const productNames = Object.keys(totals);
-        if (productNames.length > 0) {
-            // Using a loop for robust, individual inserts instead of a single bulk insert
-            for (const name of productNames) {
-                await connection.query(
-                    "INSERT INTO license_totals (product_name, total_licenses) VALUES (?, ?)",
-                    [name, totals[name]]
-                );
-            }
+    db.query("SELECT produto FROM licenses WHERE id = ?", [id], (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        if (results.length > 0) {
+            const productName = results[0].produto;
+            db.query("DELETE FROM licenses WHERE id = ?", [id], (deleteErr) => {
+                if (deleteErr) return res.status(500).json({ message: "Database error", error: deleteErr });
+                logAction(username, 'DELETE', 'LICENSE', id, `Deleted license for product: ${productName}`);
+                res.status(204).send();
+            });
+        } else {
+            res.status(404).json({ message: "License not found" });
         }
-        
-        await logAction(username, 'UPDATE', 'TOTALS', null, `License totals updated for products: ${productNames.join(', ')}`, connection);
-
-        await connection.commit();
-        res.json({ success: true, message: 'License totals saved successfully' });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error saving license totals:', error);
-        res.status(500).json({ message: 'Error saving license totals' });
-    } finally {
-        connection.release();
-    }
+    });
 });
 
-// Endpoint to rename a product
-app.post('/api/licenses/rename-product', async (req, res) => {
-    const { oldName, newName, username } = req.body;
-    if (!oldName || !newName) {
-        return res.status(400).json({ message: 'Old name and new name are required' });
-    }
-
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        await connection.query(
-            "UPDATE licenses SET produto = ? WHERE produto = ?",
-            [newName, oldName]
-        );
-        await connection.query(
-            "UPDATE license_totals SET product_name = ? WHERE product_name = ?",
-            [newName, oldName]
-        );
-        
-        await logAction(username, 'UPDATE', 'PRODUCT', oldName, `Product renamed from '${oldName}' to '${newName}'`, connection);
-
-        await connection.commit();
-        res.json({ success: true, message: 'Product renamed successfully' });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Error renaming product:', error);
-        res.status(500).json({ message: 'Error renaming product' });
-    } finally {
-        connection.release();
-    }
-});
-
-app.post('/api/licenses/import', async (req, res) => {
+app.post('/api/licenses/import', isAdmin, async (req, res) => {
     const { productName, licenses, username } = req.body;
-    if (!productName || !Array.isArray(licenses)) {
-        return res.status(400).json({ success: false, message: 'Invalid data format.' });
-    }
-    const connection = await db.getConnection();
+    const connection = await db.promise().getConnection();
     try {
         await connection.beginTransaction();
-
         await connection.query('DELETE FROM licenses WHERE produto = ?', [productName]);
 
-        if (licenses.length > 0) {
+        if (licenses && licenses.length > 0) {
+            const sql = "INSERT INTO licenses (produto, tipoLicenca, chaveSerial, dataExpiracao, usuario, cargo, setor, gestor, centroCusto, contaRazao, nomeComputador, numeroChamado, observacoes, approval_status) VALUES ?";
             const values = licenses.map(l => [
-                productName, l.tipoLicenca, l.chaveSerial, l.dataExpiracao || null, l.usuario,
-                l.cargo, l.setor, l.gestor, l.centroCusto, l.contaRazao, l.nomeComputador,
-                l.numeroChamado, l.observacoes, 'approved', 1 // Approved by default on import, created by admin (id 1)
+                productName, l.tipoLicenca, l.chaveSerial, l.dataExpiracao, l.usuario, l.cargo, l.setor,
+                l.gestor, l.centroCusto, l.contaRazao, l.nomeComputador, l.numeroChamado, l.observacoes, 'approved'
             ]);
-            await connection.query(
-                'INSERT INTO licenses (produto, tipoLicenca, chaveSerial, dataExpiracao, usuario, cargo, setor, gestor, centroCusto, contaRazao, nomeComputador, numeroChamado, observacoes, approval_status, created_by_id) VALUES ?',
-                [values]
-            );
+            await connection.query(sql, [values]);
         }
         
-        await logAction(username, 'IMPORT', 'LICENSE', productName, `Imported ${licenses.length} licenses for product ${productName}.`);
-
         await connection.commit();
-        res.json({ success: true, message: `Successfully imported ${licenses.length} licenses for ${productName}.` });
-    } catch (error) {
+        logAction(username, 'UPDATE', 'LICENSE', productName, `Replaced all licenses for product ${productName} with ${licenses.length} new items via CSV import.`);
+        res.json({ success: true, message: `Licenças para ${productName} importadas com sucesso.` });
+    } catch (err) {
         await connection.rollback();
-        console.error('Error importing licenses:', error);
-        res.status(500).json({ success: false, message: `Error importing licenses: ${error.message}` });
+        console.error("License import error:", err);
+        res.status(500).json({ success: false, message: `Erro de banco de dados: ${err.message}` });
     } finally {
         connection.release();
     }
 });
 
 
-// GET all users
-app.get('/api/users', async (req, res) => {
+// --- LICENSE TOTALS & PRODUCT MANAGEMENT ---
+app.get('/api/licenses/totals', async (req, res) => {
     try {
-        const [rows] = await db.query("SELECT id, username, realName, email, role, DATE_FORMAT(lastLogin, '%Y-%m-%d %H:%i:%s') as lastLogin, is2FAEnabled, ssoProvider FROM users ORDER BY realName");
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ message: 'Error fetching users' });
+        const [rows] = await db.promise().query("SELECT config_value FROM app_config WHERE config_key = 'license_totals'");
+        if (rows.length > 0 && rows[0].config_value) {
+            res.json(JSON.parse(rows[0].config_value));
+        } else {
+            res.json({}); // Return empty object if not found
+        }
+    } catch (err) {
+        console.error("Get license totals error:", err);
+        res.status(500).json({});
     }
 });
 
-app.post('/api/users', async (req, res) => {
-    const { user, username } = req.body;
-    const hashedPassword = await bcrypt.hash(user.password, 10);
+app.post('/api/licenses/totals', isAdmin, async (req, res) => {
+    const { totals, username } = req.body;
     try {
-        const [result] = await db.query(
-            'INSERT INTO users (username, password, realName, email, role) VALUES (?, ?, ?, ?, ?)',
-            [user.username, hashedPassword, user.realName, user.email, user.role]
+        const totalsJson = JSON.stringify(totals);
+        await db.promise().query(
+            "INSERT INTO app_config (config_key, config_value) VALUES ('license_totals', ?) ON DUPLICATE KEY UPDATE config_value = ?",
+            [totalsJson, totalsJson]
         );
-        await logAction(username, 'CREATE', 'USER', result.insertId, `Created user: ${user.username}`);
-        res.status(201).json({ id: result.insertId, ...user });
-    } catch (error) {
-        console.error('Error adding user:', error);
-        res.status(500).json({ message: 'Error adding user' });
+        logAction(username, 'UPDATE', 'TOTALS', null, 'Updated license totals');
+        res.json({ success: true, message: 'Totais de licenças salvos com sucesso.' });
+    } catch (err) {
+        console.error("Save license totals error:", err);
+        res.status(500).json({ success: false, message: 'Erro ao salvar totais de licenças.' });
     }
 });
 
-app.put('/api/users/:id', async (req, res) => {
+app.post('/api/licenses/rename-product', isAdmin, async (req, res) => {
+    const { oldName, newName, username } = req.body;
+    try {
+        await db.promise().query("UPDATE licenses SET produto = ? WHERE produto = ?", [newName, oldName]);
+        logAction(username, 'UPDATE', 'PRODUCT', oldName, `Renamed product from ${oldName} to ${newName}`);
+        res.status(204).send();
+    } catch (err) {
+        console.error("Rename product error:", err);
+        res.status(500).json({ message: 'Failed to rename product' });
+    }
+});
+
+// --- USERS ---
+app.get('/api/users', (req, res) => {
+    db.query("SELECT id, username, realName, email, role, lastLogin, is2FAEnabled, ssoProvider, avatarUrl FROM users", (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        res.json(results);
+    });
+});
+
+app.post('/api/users', (req, res) => {
+    const { user, username } = req.body;
+    user.password = bcrypt.hashSync(user.password, SALT_ROUNDS);
+    db.query("INSERT INTO users SET ?", user, (err, result) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        logAction(username, 'CREATE', 'USER', result.insertId, `Created new user: ${user.username}`);
+        res.status(201).json({ id: result.insertId, ...user });
+    });
+});
+
+app.put('/api/users/:id', (req, res) => {
     const { id } = req.params;
     const { user, username } = req.body;
-    try {
-        let query = 'UPDATE users SET username = ?, realName = ?, email = ?, role = ?';
-        const params = [user.username, user.realName, user.email, user.role];
-        if (user.password) {
-            const hashedPassword = await bcrypt.hash(user.password, 10);
-            query += ', password = ?';
-            params.push(hashedPassword);
-        }
-        query += ' WHERE id = ?';
-        params.push(id);
-
-        await db.query(query, params);
-        await logAction(username, 'UPDATE', 'USER', id, `Updated user: ${user.username}`);
-        res.json({ id, ...user });
-    } catch (error) {
-        console.error('Error updating user:', error);
-        res.status(500).json({ message: 'Error updating user' });
+    if (user.password) {
+        user.password = bcrypt.hashSync(user.password, SALT_ROUNDS);
+    } else {
+        delete user.password;
     }
+    db.query("UPDATE users SET ? WHERE id = ?", [user, id], (err) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        logAction(username, 'UPDATE', 'USER', id, `Updated user: ${user.username}`);
+        res.json(user);
+    });
 });
 
-
-app.put('/api/users/:id/profile', async (req, res) => {
+app.put('/api/users/:id/profile', (req, res) => {
     const { id } = req.params;
     const { realName, avatarUrl } = req.body;
-    try {
-        await db.query('UPDATE users SET realName = ?, avatarUrl = ? WHERE id = ?', [realName, avatarUrl, id]);
-        
-        // Fetch the updated user data to return
-        const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'User not found after update' });
-        }
-        const updatedUser = rows[0];
-        const { password, twoFASecret, ...userResponse } = updatedUser;
-
-        res.json(userResponse);
-    } catch (error) {
-        console.error('Error updating user profile:', error);
-        res.status(500).json({ message: 'Error updating user profile' });
-    }
+    db.query("UPDATE users SET realName = ?, avatarUrl = ? WHERE id = ?", [realName, avatarUrl, id], (err) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        db.query("SELECT id, username, realName, email, role, lastLogin, is2FAEnabled, ssoProvider, avatarUrl FROM users WHERE id = ?", [id], (selectErr, results) => {
+            if (selectErr || results.length === 0) return res.status(500).json({ message: "Failed to fetch updated user data" });
+            res.json(results[0]);
+        });
+    });
 });
 
-app.delete('/api/users/:id', async (req, res) => {
+
+app.delete('/api/users/:id', (req, res) => {
     const { id } = req.params;
     const { username } = req.body;
-    try {
-        const [rows] = await db.query('SELECT username FROM users WHERE id = ?', [id]);
-        const deletedUsername = rows.length > 0 ? rows[0].username : `ID ${id}`;
-        
-        await db.query('DELETE FROM users WHERE id = ?', [id]);
-
-        await logAction(username, 'DELETE', 'USER', id, `Deleted user: ${deletedUsername}`);
-        res.status(204).send();
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        res.status(500).json({ message: 'Error deleting user' });
-    }
+    db.query("SELECT username FROM users WHERE id = ?", [id], (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        if (results.length > 0) {
+            const deletedUsername = results[0].username;
+            db.query("DELETE FROM users WHERE id = ?", [id], (deleteErr) => {
+                if (deleteErr) return res.status(500).json({ message: "Database error", error: deleteErr });
+                logAction(username, 'DELETE', 'USER', id, `Deleted user: ${deletedUsername}`);
+                res.status(204).send();
+            });
+        }
+    });
 });
 
-app.get('/api/audit-log', async (req, res) => {
-    try {
-        const [rows] = await db.query('SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 200');
-        res.json(rows);
-    } catch (error) {
-        console.error('Error fetching audit log:', error);
-        res.status(500).json({ message: 'Error fetching audit log' });
-    }
+// --- AUDIT LOG ---
+app.get('/api/audit-log', (req, res) => {
+    db.query("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 500", (err, results) => {
+        if (err) return res.status(500).json({ message: "Database error", error: err });
+        res.json(results);
+    });
 });
 
+// --- APPROVALS ---
 app.get('/api/approvals/pending', async (req, res) => {
     try {
-        const [equipment] = await db.query("SELECT id, equipamento as name, 'equipment' as type FROM equipment WHERE approval_status = 'pending_approval'");
-        const [licenses] = await db.query("SELECT id, CONCAT(produto, ' - ', usuario) as name, 'license' as type FROM licenses WHERE approval_status = 'pending_approval'");
+        const [equipment] = await db.promise().query("SELECT id, equipamento as name, 'equipment' as type FROM equipment WHERE approval_status = 'pending_approval'");
+        const [licenses] = await db.promise().query("SELECT id, CONCAT(produto, ' - ', usuario) as name, 'license' as type FROM licenses WHERE approval_status = 'pending_approval'");
         res.json([...equipment, ...licenses]);
-    } catch (error) {
-        console.error('Error fetching pending approvals:', error);
-        res.status(500).json({ message: 'Error fetching pending approvals' });
+    } catch (err) {
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
 app.post('/api/approvals/approve', async (req, res) => {
     const { type, id, username } = req.body;
-    const connection = await db.getConnection();
+    const table = type === 'equipment' ? 'equipment' : 'licenses';
     try {
-        await connection.beginTransaction();
-
-        const table = type === 'equipment' ? 'equipment' : 'licenses';
-        await connection.query(
-            `UPDATE ${table} SET approval_status = 'approved' WHERE id = ?`,
-            [id]
-        );
-        
-        const itemNameResult = await connection.query(`SELECT ${type === 'equipment' ? 'equipamento' : 'produto'} as name FROM ${table} WHERE id = ?`, [id]);
-        const itemName = itemNameResult[0][0]?.name || `ID ${id}`;
-
-        await logAction(username, 'UPDATE', type.toUpperCase(), id, `Approved item: '${itemName}'`, connection);
-
-        await connection.commit();
-        res.json({ message: 'Item approved successfully' });
-    } catch (error) {
-        await connection.rollback();
-        console.error(`Error approving item:`, error);
-        res.status(500).json({ message: 'Error approving item' });
-    } finally {
-        connection.release();
+        await db.promise().query(`UPDATE ${table} SET approval_status = 'approved' WHERE id = ?`, [id]);
+        logAction(username, 'UPDATE', type.toUpperCase(), id, 'Approved item');
+        res.status(204).send();
+    } catch (err) {
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
 app.post('/api/approvals/reject', async (req, res) => {
     const { type, id, username, reason } = req.body;
-    const connection = await db.getConnection();
+    const table = type === 'equipment' ? 'equipment' : 'licenses';
     try {
-        await connection.beginTransaction();
-
-        const table = type === 'equipment' ? 'equipment' : 'licenses';
-        await connection.query(
-            `UPDATE ${table} SET approval_status = 'rejected', rejection_reason = ? WHERE id = ?`,
-            [reason, id]
-        );
-        
-        const itemNameResult = await connection.query(`SELECT ${type === 'equipment' ? 'equipamento' : 'produto'} as name FROM ${table} WHERE id = ?`, [id]);
-        const itemName = itemNameResult[0][0]?.name || `ID ${id}`;
-
-        await logAction(username, 'UPDATE', type.toUpperCase(), id, `Rejected item '${itemName}'. Reason: ${reason}`, connection);
-
-        await connection.commit();
-        res.json({ message: 'Item rejected successfully' });
-    } catch (error) {
-        await connection.rollback();
-        console.error(`Error rejecting item:`, error);
-        res.status(500).json({ message: 'Error rejecting item' });
-    } finally {
-        connection.release();
+        await db.promise().query(`UPDATE ${table} SET approval_status = 'rejected', rejection_reason = ? WHERE id = ?`, [reason, id]);
+        logAction(username, 'UPDATE', type.toUpperCase(), id, `Rejected item. Reason: ${reason}`);
+        res.status(204).send();
+    } catch (err) {
+        res.status(500).json({ message: "Database error", error: err });
     }
 });
 
-// 2FA Endpoints
+// --- 2FA Endpoints ---
 app.post('/api/generate-2fa', async (req, res) => {
     const { userId } = req.body;
     try {
-        const [rows] = await db.query('SELECT username FROM users WHERE id = ?', [userId]);
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-        const username = rows[0].username;
+        const [users] = await db.promise().query('SELECT username, email FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ message: 'User not found' });
 
         const secret = authenticator.generateSecret();
-        await db.query('UPDATE users SET twoFASecret = ? WHERE id = ?', [secret, userId]);
+        const otpauth = authenticator.keyuri(users[0].email, 'InventarioPro', secret);
 
-        const otpauth = authenticator.keyuri(username, 'InventarioPro', secret);
+        await db.promise().query('UPDATE users SET twoFASecret = ? WHERE id = ?', [secret, userId]);
+
         res.json({ secret, qrCodeUrl: otpauth });
     } catch (error) {
-        console.error('Error generating 2FA secret:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: "Failed to generate 2FA secret." });
     }
 });
 
 app.post('/api/enable-2fa', async (req, res) => {
     const { userId, token } = req.body;
     try {
-        const [rows] = await db.query('SELECT twoFASecret, username FROM users WHERE id = ?', [userId]);
-        if (rows.length === 0 || !rows[0].twoFASecret) {
-            return res.status(400).json({ message: '2FA secret not found for user' });
-        }
-        const user = rows[0];
-        const isValid = authenticator.verify({ token, secret: user.twoFASecret });
+        const [users] = await db.promise().query('SELECT twoFASecret FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ message: 'User not found' });
 
+        const isValid = authenticator.check(token, users[0].twoFASecret);
         if (isValid) {
-            await db.query('UPDATE users SET is2FAEnabled = TRUE WHERE id = ?', [userId]);
-            await logAction(user.username, '2FA_ENABLE', 'USER', userId, '2FA enabled successfully');
-            res.status(200).json({ message: '2FA enabled successfully' });
+            await db.promise().query('UPDATE users SET is2FAEnabled = TRUE WHERE id = ?', [userId]);
+            res.status(204).send();
         } else {
-            res.status(401).json({ message: 'Invalid token' });
+            res.status(400).json({ message: 'Token inválido' });
         }
     } catch (error) {
-        console.error('Error enabling 2FA:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: "Failed to enable 2FA." });
     }
 });
 
 app.post('/api/disable-2fa', async (req, res) => {
     const { userId } = req.body;
     try {
-        await db.query('UPDATE users SET is2FAEnabled = FALSE, twoFASecret = NULL WHERE id = ?', [userId]);
-        const [rows] = await db.query('SELECT username FROM users WHERE id = ?', [userId]);
-        await logAction(rows[0].username, '2FA_DISABLE', 'USER', userId, '2FA disabled successfully');
-        res.status(200).json({ message: '2FA disabled successfully' });
+        await db.promise().query('UPDATE users SET is2FAEnabled = FALSE, twoFASecret = NULL WHERE id = ?', [userId]);
+        res.status(204).send();
     } catch (error) {
-        console.error('Error disabling 2FA:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: "Failed to disable 2FA." });
     }
 });
 
 app.post('/api/disable-user-2fa', async (req, res) => {
+    // This endpoint should be protected by an admin middleware
     const { userId } = req.body;
     try {
-        await db.query('UPDATE users SET is2FAEnabled = FALSE, twoFASecret = NULL WHERE id = ?', [userId]);
-        res.status(200).json({ message: '2FA disabled for user successfully' });
+        await db.promise().query('UPDATE users SET is2FAEnabled = FALSE, twoFASecret = NULL WHERE id = ?', [userId]);
+        res.status(204).send();
     } catch (error) {
-        console.error('Error disabling user 2FA:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: "Failed to disable 2FA for user." });
     }
 });
 
-// Settings Endpoints
+// --- SETTINGS ---
 app.get('/api/settings', async (req, res) => {
     try {
-        const [rows] = await db.query("SELECT * FROM app_config");
+        const [rows] = await db.promise().query("SELECT config_key, config_value FROM app_config");
         const settings = rows.reduce((acc, row) => {
-            const key = row.config_key;
             let value = row.config_value;
-
-            // More robust value parsing
-            if (value === 'true') {
-                acc[key] = true;
-            } else if (value === 'false') {
-                acc[key] = false;
-            } else if (value != null && value.trim() !== '' && !isNaN(Number(value))) {
-                const num = Number(value);
-                // Only convert if it's a pure integer string
-                if (Number.isInteger(num) && String(num) === value) {
-                    acc[key] = num;
-                } else {
-                    acc[key] = value; // Keep as string if it's a float-like string or something else
-                }
-            } else {
-                acc[key] = value;
-            }
+            if (value === 'true') value = true;
+            if (value === 'false') value = false;
+            if (row.config_key.endsWith('Port') && value) value = Number(value);
+            acc[row.config_key] = value;
             return acc;
         }, {});
         res.json(settings);
-    } catch (error) {
-        console.error('Error fetching settings:', error);
-        res.status(500).json({ message: 'Error fetching settings' });
+    } catch (err) {
+        res.status(500).json({ message: 'Failed to retrieve settings' });
     }
 });
 
-app.post('/api/settings', async (req, res) => {
+app.post('/api/settings', isAdmin, async (req, res) => {
     const { settings, username } = req.body;
-    const connection = await db.getConnection();
+    const connection = await db.promise().getConnection();
     try {
         await connection.beginTransaction();
-
         for (const key in settings) {
+            let value = settings[key];
+            if (typeof value === 'boolean') {
+                value = value.toString();
+            }
+            if (value === null || typeof value === 'undefined') {
+                value = '';
+            }
             await connection.query(
                 "INSERT INTO app_config (config_key, config_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE config_value = ?",
-                [key, String(settings[key]), String(settings[key])]
+                [key, value, value]
             );
         }
-        
-        await logAction(username, 'SETTINGS_UPDATE', 'SETTINGS', null, `Updated system settings`, connection);
-        
         await connection.commit();
-        res.json({ success: true, message: 'Settings saved successfully' });
-    } catch (error) {
+        logAction(username, 'SETTINGS_UPDATE', 'SETTINGS', null, 'Updated application settings');
+        res.json({ success: true, message: 'Configurações salvas com sucesso!' });
+    } catch (err) {
         await connection.rollback();
-        console.error('Error saving settings:', error);
-        res.status(500).json({ message: 'Error saving settings' });
+        console.error("Save settings error:", err);
+        res.status(500).json({ success: false, message: 'Failed to save settings' });
     } finally {
         connection.release();
     }
 });
 
-
-// Database Backup/Restore Endpoints
-const BACKUP_DIR = path.join(__dirname, 'backups');
-const BACKUP_FILE = path.join(BACKUP_DIR, 'inventario_pro_backup.sql');
-
-const getTables = async () => {
-    const [rows] = await db.query('SHOW TABLES');
-    return rows.map(row => Object.values(row)[0]);
-};
-
-app.get('/api/database/backup-status', async (req, res) => {
+// TERMO TEMPLATES
+app.get('/api/config/termo-templates', async (req, res) => {
     try {
-        await fs.access(BACKUP_FILE);
-        const stats = await fs.stat(BACKUP_FILE);
+        const [rows] = await db.promise().query("SELECT config_key, config_value FROM app_config WHERE config_key IN ('termo_entrega_template', 'termo_devolucao_template')");
+        const templates = rows.reduce((acc, row) => {
+            if (row.config_key === 'termo_entrega_template') acc.entregaTemplate = row.config_value;
+            if (row.config_key === 'termo_devolucao_template') acc.devolucaoTemplate = row.config_value;
+            return acc;
+        }, { entregaTemplate: null, devolucaoTemplate: null });
+        res.json(templates);
+    } catch (err) {
+        res.status(500).json({ message: 'Failed to retrieve term templates' });
+    }
+});
+
+// --- DATABASE MANAGEMENT ---
+app.get('/api/database/backup-status', (req, res) => {
+    const backupFile = path.join(BACKUP_DIR, 'inventario_pro_backup.sql.gz');
+    if (fs.existsSync(backupFile)) {
+        const stats = fs.statSync(backupFile);
         res.json({ hasBackup: true, backupTimestamp: stats.mtime.toISOString() });
-    } catch (error) {
+    } else {
         res.json({ hasBackup: false });
     }
 });
 
+app.post('/api/database/backup', isAdmin, (req, res) => {
+    const backupFile = path.join(BACKUP_DIR, `inventario_pro_backup.sql.gz`);
+    const command = `mysqldump -h ${DB_HOST} -u ${DB_USER} -p'${DB_PASSWORD}' ${DB_DATABASE} | gzip > ${backupFile}`;
 
-app.post('/api/database/backup', async (req, res) => {
-    const { username } = req.body;
-    try {
-        await fs.mkdir(BACKUP_DIR, { recursive: true });
-
-        const tables = await getTables();
-        let dump = '';
-
-        for (const table of tables) {
-            if (table === 'migrations') continue;
-            
-            dump += `DROP TABLE IF EXISTS \`${table}\`;\n`;
-
-            const [createTableResult] = await db.query(`SHOW CREATE TABLE \`${table}\``);
-            dump += createTableResult[0]['Create Table'] + ';\n\n';
-
-            const [rows] = await db.query(`SELECT * FROM \`${table}\``);
-            if (rows.length > 0) {
-                dump += `INSERT INTO \`${table}\` VALUES `;
-                const values = rows.map(row => {
-                    const rowValues = Object.values(row).map(val => {
-                        if (val === null) return 'NULL';
-                        return db.escape(val);
-                    });
-                    return `(${rowValues.join(',')})`;
-                });
-                dump += values.join(',\n') + ';\n\n';
-            }
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Backup error: ${error.message}`);
+            return res.status(500).json({ success: false, message: 'Falha ao criar backup.' });
         }
-        
-        await fs.writeFile(BACKUP_FILE, dump);
-        
-        await logAction(username, 'UPDATE', 'SETTINGS', 'DATABASE', 'Database backup created.');
-
-        res.json({ success: true, message: 'Backup created successfully.' });
-    } catch (error) {
-        console.error('Backup error:', error);
-        res.status(500).json({ success: false, message: `Backup failed: ${error.message}` });
-    }
-});
-
-
-app.post('/api/database/restore', async (req, res) => {
-    const { username } = req.body;
-    const connection = await db.getConnection();
-    try {
-        const dump = await fs.readFile(BACKUP_FILE, 'utf-8');
-
-        await connection.query('SET foreign_key_checks = 0');
-        const tables = await getTables();
-        for (const table of tables) {
-            if (table !== 'migrations') {
-                await connection.query(`DROP TABLE IF EXISTS \`${table}\``);
-            }
+        if (stderr) {
+            console.error(`Backup stderr: ${stderr}`);
+            // Don't always fail on stderr, as mysqldump can write warnings there
         }
-        
-        // Execute the dump
-        const queries = dump.split(';\n').filter(q => q.trim() !== '');
-        for (const query of queries) {
-            await connection.query(query);
-        }
-        
-        await connection.query('SET foreign_key_checks = 1');
-        
-        await logAction(username, 'UPDATE', 'SETTINGS', 'DATABASE', 'Database restored from backup.');
-        
-        res.json({ success: true, message: 'Database restored successfully.' });
-    } catch (error) {
-        console.error('Restore error:', error);
-        res.status(500).json({ success: false, message: `Restore failed: ${error.message}` });
-    } finally {
-        connection.release();
-    }
-});
-
-app.post('/api/database/clear', async (req, res) => {
-    const { username } = req.body;
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-
-        await connection.query('SET foreign_key_checks = 0');
-        const tables = await getTables();
-        for (const table of tables) {
-            if (table !== 'migrations' && table !== 'users') {
-                 await connection.query(`TRUNCATE TABLE \`${table}\``);
-            }
-        }
-        // Special handling for users table to keep admin
-        await connection.query('DELETE FROM users WHERE id != 1');
-        
-        // Reset migrations but keep the table
-        await connection.query('TRUNCATE TABLE migrations');
-
-        await connection.query('SET foreign_key_checks = 1');
-        
-        await logAction(username, 'DELETE', 'SETTINGS', 'DATABASE', 'Database cleared (reset).');
-
-        await connection.commit();
-        res.json({ success: true, message: 'Database cleared successfully. Please re-run migrations by restarting the server.' });
-    } catch (error) {
-        await connection.rollback();
-        console.error('Clear DB error:', error);
-        res.status(500).json({ success: false, message: `Clear DB failed: ${error.message}` });
-    } finally {
-        connection.release();
-    }
-});
-
-app.get('/api/config/termo-templates', async (req, res) => {
-    try {
-        const [rows] = await db.query("SELECT config_key, config_value FROM app_config WHERE config_key IN ('termo_entrega_template', 'termo_devolucao_template')");
-        const templates = rows.reduce((acc, row) => {
-            acc[row.config_key.replace('_template', 'Template')] = row.config_value;
-            return acc;
-        }, {});
-        res.json(templates);
-    } catch (error) {
-        console.error('Error fetching termo templates:', error);
-        res.status(500).json({ message: 'Error fetching termo templates' });
-    }
-});
-
-
-const PORT = process.env.API_PORT || 3001;
-initializeDatabase().then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Server is running on port ${PORT}`);
+        logAction(req.body.username, 'UPDATE', 'DATABASE', null, 'Database backup created');
+        res.json({ success: true, message: 'Backup do banco de dados criado com sucesso.', backupTimestamp: new Date().toISOString() });
     });
 });
+
+app.post('/api/database/restore', isAdmin, (req, res) => {
+    const backupFile = path.join(BACKUP_DIR, 'inventario_pro_backup.sql.gz');
+    if (!fs.existsSync(backupFile)) {
+        return res.status(404).json({ success: false, message: 'Nenhum arquivo de backup encontrado.' });
+    }
+    const command = `gunzip < ${backupFile} | mysql -h ${DB_HOST} -u ${DB_USER} -p'${DB_PASSWORD}' ${DB_DATABASE}`;
+
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Restore error: ${error.message}`);
+            return res.status(500).json({ success: false, message: 'Falha ao restaurar o backup.' });
+        }
+        logAction(req.body.username, 'UPDATE', 'DATABASE', null, 'Database restored from backup');
+        res.json({ success: true, message: 'Banco de dados restaurado com sucesso.' });
+    });
+});
+
+app.post('/api/database/clear', isAdmin, async (req, res) => {
+    const connection = await db.promise().getConnection();
+    try {
+        await connection.beginTransaction();
+        await connection.query('SET FOREIGN_KEY_CHECKS = 0;');
+        await connection.query('DELETE FROM equipment_history');
+        await connection.query('DELETE FROM licenses');
+        await connection.query('DELETE FROM equipment');
+        await connection.query('DELETE FROM audit_log');
+        await connection.query('DELETE FROM app_config');
+        await connection.query('DELETE FROM users WHERE username != ?', ['admin']);
+        await connection.query('ALTER TABLE equipment_history AUTO_INCREMENT = 1');
+        await connection.query('ALTER TABLE licenses AUTO_INCREMENT = 1');
+        await connection.query('ALTER TABLE equipment AUTO_INCREMENT = 1');
+        await connection.query('ALTER TABLE audit_log AUTO_INCREMENT = 1');
+        await connection.query('ALTER TABLE app_config AUTO_INCREMENT = 1');
+        await connection.query('SET FOREIGN_KEY_CHECKS = 1;');
+        await connection.commit();
+        
+        // Re-run initial data setup (migrations will handle this)
+        await runMigrations();
+
+        logAction(req.body.username, 'DELETE', 'DATABASE', 'ALL', 'Database cleared and reset to initial state');
+        res.json({ success: true, message: 'Banco de dados zerado com sucesso. Apenas o usuário admin foi mantido.' });
+    } catch (err) {
+        await connection.rollback();
+        console.error("Database clear error:", err);
+        res.status(500).json({ success: false, message: `Erro ao zerar o banco de dados: ${err.message}` });
+    } finally {
+        connection.release();
+    }
+});
+
+
+// --- SERVER STARTUP ---
+const startServer = async () => {
+    try {
+        await runMigrations();
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+        });
+    } catch (err) {
+        console.error("Failed to start server due to migration errors:", err);
+        process.exit(1);
+    }
+};
+
+startServer();

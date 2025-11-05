@@ -42,7 +42,7 @@ const AuditLog: React.FC = () => {
             case 'EQUIPMENT': return 'Computer';
             case 'LICENSE': return 'ScrollText';
             case 'USER': return 'User';
-            // FIX: Corrected icon name from 'FileQuestion' to 'FileQuestionMark' as suggested by the type error.
+// FIX: Corrected icon name from 'FileQuestion' to 'FileQuestionMark' as suggested by the type error.
             default: return 'FileQuestionMark';
         }
     };
@@ -50,11 +50,11 @@ const AuditLog: React.FC = () => {
     // FIX: Use the imported `icons` object directly instead of Icon.icons
     const getActionInfo = (log: AuditLogEntry): { text: string; color: string; icon: keyof typeof icons } => {
         switch (log.action_type) {
-            // FIX: Corrected icon name from 'PlusCircle' to 'CirclePlus' to match a valid name used elsewhere in the app.
+// FIX: Corrected icon name from 'PlusCircle' to 'CirclePlus' to match a valid name used elsewhere in the app.
             case 'CREATE': return { text: 'Criação', color: 'text-green-500', icon: 'CirclePlus' };
             case 'UPDATE': return { text: 'Atualização', color: 'text-yellow-500', icon: 'Pencil' };
             case 'DELETE': return { text: 'Exclusão', color: 'text-red-500', icon: 'Trash2' };
-            // FIX: The icon 'HelpCircle' was causing a type error. Replaced with 'Info' as a safe alternative for unknown action types.
+// FIX: The icon 'HelpCircle' was causing a type error. Replaced with 'Info' as a safe alternative for unknown action types.
             default: return { text: log.action_type, color: 'text-gray-500', icon: 'Info' };
         }
     };

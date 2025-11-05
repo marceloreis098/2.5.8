@@ -45,12 +45,7 @@ const FileUploadBox: React.FC<{
     );
 };
 
-interface DataConsolidationProps {
-    currentUser: User;
-    onImportSuccess: () => void;
-}
-
-const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onImportSuccess }) => {
+const DataConsolidation: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [baseFile, setBaseFile] = useState<File | null>(null);
     const [absoluteFile, setAbsoluteFile] = useState<File | null>(null);
     const [consolidatedData, setConsolidatedData] = useState<PartialEquipment[]>([]);
@@ -111,83 +106,64 @@ const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onIm
     };
 
     const handleConsolidate = async () => {
-        if (!baseFile && !absoluteFile) {
-            setError("Por favor, selecione pelo menos um arquivo (Planilha Base ou Relatório Absolute).");
-            return;
-        }
+        if (!baseFile || !absoluteFile) return;
 
         setIsLoading(true);
         setError(null);
         setConsolidatedData([]);
 
         try {
-            let finalData: PartialEquipment[] = [];
-            let baseData: PartialEquipment[] = [];
-            let absoluteData: PartialEquipment[] = [];
-
-            if (baseFile) {
-                const baseText = await baseFile.text();
-                const baseMappings: { [key: string]: keyof Equipment } = {
-                    'EQUIPAMENTO': 'equipamento', 'GARANTIA': 'garantia', 'PATRIMONIO': 'patrimonio', 'SERIAL': 'serial',
-                    'USUÁRIO ATUAL': 'usuarioAtual', 'USUÁRIO ANTERIOR': 'usuarioAnterior', 'LOCAL': 'local', 'SETOR': 'setor',
-                    'DATA ENTREGA O USUÁRIO': 'dataEntregaUsuario', 'STATUS': 'status', 'DATA DE DEVOLUÇÃO': 'dataDevolucao',
-                    'TIPO': 'tipo', 'NOTA DE COMPRA': 'notaCompra', 'NOTA / PL K&M': 'notaPlKm',
-                    'TERMO DE RESPONSABILIDADE': 'termoResponsabilidade', 'FOTO': 'foto', 'QR CODE': 'qrCode',
-                    'MARCA': 'brand', 'MODELO': 'model', 'EMAIL COLABORADOR': 'emailColaborador',
-                    // Novos campos - Planilha Base
-                    'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
-                    'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
-                };
-                baseData = parseCsv(baseText, baseMappings);
-            }
-
-            if (absoluteFile) {
-                const absoluteText = await absoluteFile.text();
-                const absoluteMappings: { [key: string]: keyof Equipment } = {
-                    'NOMEDODISPOSITIVO': 'equipamento', 'NÚMERODESÉRIE': 'serial',
-                    'NOMEDOUSUÁRIOATUAL': 'usuarioAtual', 'MARCA': 'brand', 'MODELO': 'model',
-                    'EMAIL DO COLABORADOR': 'emailColaborador',
-                    // Novos campos - Relatório Absolute
-                    'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
-                    'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
-                };
-                absoluteData = parseCsv(absoluteText, absoluteMappings);
-            }
-
-            if (baseFile && absoluteFile) {
-                // Existing consolidation logic
-                const consolidatedMap = new Map<string, PartialEquipment>();
-                baseData.forEach(baseItem => {
-                    const key = baseItem.serial!.toUpperCase().replace(/ /g, '');
-                    consolidatedMap.set(key, baseItem);
-                });
-                absoluteData.forEach(absoluteItem => {
-                    const key = absoluteItem.serial!.toUpperCase().replace(/ /g, '');
-                    const existingItem = consolidatedMap.get(key) || {};
-                    consolidatedMap.set(key, { ...existingItem, ...absoluteItem });
-                });
-                finalData = Array.from(consolidatedMap.values()).map(item => {
-                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
-                        return { ...item, status: 'Em Uso' };
-                    }
-                    return item;
-                });
-            } else if (baseFile) {
-                finalData = baseData.map(item => {
-                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
-                        return { ...item, status: 'Em Uso' };
-                    }
-                    return item;
-                });
-            } else if (absoluteFile) {
-                finalData = absoluteData.map(item => {
-                    if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
-                        return { ...item, status: 'Em Uso' };
-                    }
-                    return item;
-                });
-            }
+            const baseText = await baseFile.text();
+            const absoluteText = await absoluteFile.text();
             
+            const baseMappings: { [key: string]: keyof Equipment } = {
+                'EQUIPAMENTO': 'equipamento', 'GARANTIA': 'garantia', 'PATRIMONIO': 'patrimonio', 'SERIAL': 'serial',
+                'USUÁRIO ATUAL': 'usuarioAtual', 'USUÁRIO ANTERIOR': 'usuarioAnterior', 'LOCAL': 'local', 'SETOR': 'setor',
+                'DATA ENTREGA O USUÁRIO': 'dataEntregaUsuario', 'STATUS': 'status', 'DATA DE DEVOLUÇÃO': 'dataDevolucao',
+                'TIPO': 'tipo', 'NOTA DE COMPRA': 'notaCompra', 'NOTA / PL K&M': 'notaPlKm',
+                'TERMO DE RESPONSABILIDADE': 'termoResponsabilidade', 'FOTO': 'foto', 'QR CODE': 'qrCode',
+                'MARCA': 'brand', 'MODELO': 'model', 'EMAIL COLABORADOR': 'emailColaborador',
+                // Novos campos - Planilha Base
+                'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
+                'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
+            };
+
+            const absoluteMappings: { [key: string]: keyof Equipment } = {
+                'NOMEDODISPOSITIVO': 'equipamento', 'NÚMERODESÉRIE': 'serial',
+                'NOMEDOUSUÁRIOATUAL': 'usuarioAtual', 'MARCA': 'brand', 'MODELO': 'model',
+                'EMAIL DO COLABORADOR': 'emailColaborador',
+                // Novos campos - Relatório Absolute
+                'IDENTIFICADOR': 'identificador', 'NOME DO SO': 'nomeSO', 'MEMÓRIA FÍSICA TOTAL': 'memoriaFisicaTotal', 
+                'GRUPO DE POLÍTICAS': 'grupoPoliticas', 'PAÍS': 'pais', 'CIDADE': 'cidade', 'ESTADO/PROVÍNCIA': 'estadoProvincia'
+            };
+
+            const baseData = parseCsv(baseText, baseMappings);
+            const absoluteData = parseCsv(absoluteText, absoluteMappings);
+            
+            const consolidatedMap = new Map<string, PartialEquipment>();
+
+            // Process base data first. This handles duplicates within the base file (last one wins).
+            baseData.forEach(baseItem => {
+                const key = baseItem.serial!.toUpperCase().replace(/ /g, '');
+                consolidatedMap.set(key, baseItem);
+            });
+
+            // Process absolute data, merging with or adding to the base data.
+            // This handles duplicates within the absolute file and ensures its data has priority.
+            absoluteData.forEach(absoluteItem => {
+                const key = absoluteItem.serial!.toUpperCase().replace(/ /g, '');
+                const existingItem = consolidatedMap.get(key) || {};
+                consolidatedMap.set(key, { ...existingItem, ...absoluteItem });
+            });
+            
+            const finalData = Array.from(consolidatedMap.values()).map(item => {
+                // If there's a current user, force the status to 'Em Uso'
+                if (item.usuarioAtual && item.usuarioAtual.trim() !== '') {
+                    return { ...item, status: 'Em Uso' };
+                }
+                return item;
+            });
+
             setConsolidatedData(finalData);
 
         } catch (e: any) {
@@ -200,18 +176,7 @@ const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onIm
     
     const handleSaveToSystem = async () => {
         if (consolidatedData.length === 0) return;
-        
-        let confirmMessage = `ATENÇÃO: Esta ação substituirá TODO o inventário de equipamentos e seu histórico por ${consolidatedData.length} novos itens`;
-        if (baseFile && absoluteFile) {
-            confirmMessage += ` consolidados dos arquivos.`;
-        } else if (baseFile) {
-            confirmMessage += ` da Planilha Base.`;
-        } else if (absoluteFile) {
-            confirmMessage += ` do Relatório Absolute.`;
-        }
-        confirmMessage += ` Esta ação é irreversível. Deseja continuar?`;
-
-        if (!window.confirm(confirmMessage)) return;
+        if (!window.confirm(`Esta ação substituirá TODO o inventário de equipamentos por ${consolidatedData.length} novos itens consolidados. Esta ação é irreversível. Deseja continuar?`)) return;
         
         setIsSaving(true);
         setError(null);
@@ -219,8 +184,8 @@ const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onIm
             const dataToSave = consolidatedData.map(item => ({...item, id: undefined})) as Omit<Equipment, 'id'>[];
             const result = await importEquipment(dataToSave, currentUser.username);
             if (result.success) {
-                alert('Inventário consolidado e salvo com sucesso!');
-                onImportSuccess();
+                alert('Inventário consolidado e salvo com sucesso! A aplicação será recarregada para refletir as mudanças.');
+                window.location.reload();
             } else {
                 setError(`Falha ao salvar no sistema: ${result.message}`);
             }
@@ -247,48 +212,38 @@ const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onIm
     ];
 
     return (
-        <div className="p-6 bg-gray-50 dark:bg-dark-bg rounded-lg border dark:border-dark-border">
-            <h3 className="text-lg font-bold text-brand-secondary dark:text-dark-text-primary mb-2 flex items-center gap-2">
-                <Icon name="DatabaseZap" size={20} />
-                Etapa 1: Consolidação Inicial do Inventário
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-dark-text-secondary mb-4">
-                Este é o primeiro passo para popular o sistema. Faça o upload da Planilha Base e/ou do Relatório Absolute para criar a base de dados inicial. Após esta etapa, esta ferramenta será desativada.
+        <div className="bg-white dark:bg-dark-card p-6 rounded-lg shadow-md">
+            <h3 className="text-xl font-bold text-brand-secondary dark:text-dark-text-primary mb-2 border-b dark:border-dark-border pb-2">Ferramenta de Consolidação de Inventário</h3>
+            <p className="text-sm text-gray-500 dark:text-dark-text-secondary mb-4">
+                Faça o upload da Planilha Base e do Relatório Absolute para consolidar os dados. O resultado substituirá o inventário atual do sistema.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FileUploadBox
-                    title="Planilha Base"
+                    title="1. Planilha Base"
                     icon="Sheet"
                     file={baseFile}
                     onFileChange={(e) => setBaseFile(e.target.files ? e.target.files[0] : null)}
                     isLoading={isLoading || isSaving}
                 />
                 <FileUploadBox
-                    title="Relatório Absolute"
+                    title="2. Relatório Absolute"
                     icon="FileText"
                     file={absoluteFile}
                     onFileChange={(e) => setAbsoluteFile(e.target.files ? e.target.files[0] : null)}
                     isLoading={isLoading || isSaving}
                 />
             </div>
-            {/* Aviso de substituição de dados */}
-            <p className="mt-6 text-sm text-yellow-600 dark:text-yellow-400 flex items-start gap-2">
-                <Icon name="AlertTriangle" size={18} className="flex-shrink-0 mt-0.5" />
-                <span>
-                    Atenção: O processo de consolidação e importação substituirá <strong>TODO</strong> o inventário de equipamentos e seu histórico no sistema.
-                </span>
-            </p>
 
             <div className="mt-6 flex justify-center">
                 <button
                     onClick={handleConsolidate}
-                    disabled={(!baseFile && !absoluteFile) || isLoading || isSaving}
+                    disabled={!baseFile || !absoluteFile || isLoading || isSaving}
                     className="bg-brand-primary text-white px-8 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center gap-2 text-lg font-semibold"
                     aria-label={isLoading ? 'Processando dados' : 'Consolidar dados'}
                 >
                     {isLoading ? <Icon name="LoaderCircle" className="animate-spin" /> : <Icon name="Combine" />}
-                    {isLoading ? 'Processando...' : 'Consolidar Dados'}
+                    {isLoading ? 'Processando...' : '1. Consolidar Dados'}
                 </button>
             </div>
 
@@ -335,7 +290,7 @@ const DataConsolidation: React.FC<DataConsolidationProps> = ({ currentUser, onIm
                             aria-label={isSaving ? 'Salvando inventário' : 'Salvar e substituir inventário'}
                         >
                             {isSaving ? <Icon name="LoaderCircle" className="animate-spin" /> : <Icon name="Save" />}
-                            {isSaving ? 'Salvando...' : 'Salvar e Substituir Inventário'}
+                            {isSaving ? 'Salvando...' : '2. Salvar e Substituir Inventário'}
                         </button>
                     </div>
                  </div>
