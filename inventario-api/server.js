@@ -1051,11 +1051,25 @@ app.get('/api/settings', async (req, res) => {
     try {
         const [rows] = await db.query("SELECT * FROM app_config");
         const settings = rows.reduce((acc, row) => {
+            const key = row.config_key;
             let value = row.config_value;
-            if (value === 'true') value = true;
-            else if (value === 'false') value = false;
-            else if (!isNaN(Number(value)) && Number.isInteger(parseFloat(value))) value = Number(value);
-            acc[row.config_key] = value;
+
+            // More robust value parsing
+            if (value === 'true') {
+                acc[key] = true;
+            } else if (value === 'false') {
+                acc[key] = false;
+            } else if (value != null && value.trim() !== '' && !isNaN(Number(value))) {
+                const num = Number(value);
+                // Only convert if it's a pure integer string
+                if (Number.isInteger(num) && String(num) === value) {
+                    acc[key] = num;
+                } else {
+                    acc[key] = value; // Keep as string if it's a float-like string or something else
+                }
+            } else {
+                acc[key] = value;
+            }
             return acc;
         }, {});
         res.json(settings);
