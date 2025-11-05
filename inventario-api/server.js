@@ -720,11 +720,13 @@ app.post('/api/licenses/totals', async (req, res) => {
 
         const productNames = Object.keys(totals);
         if (productNames.length > 0) {
-            const values = productNames.map(name => [name, totals[name]]);
-            await connection.query(
-                "INSERT INTO license_totals (product_name, total_licenses) VALUES ?",
-                [values]
-            );
+            // Using a loop for robust, individual inserts instead of a single bulk insert
+            for (const name of productNames) {
+                await connection.query(
+                    "INSERT INTO license_totals (product_name, total_licenses) VALUES (?, ?)",
+                    [name, totals[name]]
+                );
+            }
         }
         
         await logAction(username, 'UPDATE', 'TOTALS', null, `License totals updated for products: ${productNames.join(', ')}`, connection);
