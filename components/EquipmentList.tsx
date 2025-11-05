@@ -6,9 +6,6 @@ import { getEquipment, getEquipmentHistory, addEquipment, updateEquipment, delet
 import TermoResponsabilidade from './TermoResponsabilidade';
 import PeriodicUpdate from './PeriodicUpdate'; // Importar o novo componente
 
-// Informa ao TypeScript que a variável XLSX existe globalmente (carregada via script no index.html)
-declare var XLSX: any;
-
 const StatusBadge: React.FC<{ status: Equipment['approval_status'], reason?: string }> = ({ status, reason }) => {
     if (!status || status === 'approved') return null;
 
@@ -665,12 +662,15 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
         });
     }, [searchTerm, equipment, filterStatus, filterType, filterGrupoPoliticas]);
 
-    const handleExportToXlsx = () => {
+    const handleExportToXlsx = async () => {
         try {
             if (filteredEquipment.length === 0) {
                 alert("Nenhum dado para exportar com os filtros atuais.");
                 return;
             }
+
+            // Importa dinamicamente a biblioteca xlsx
+            const XLSX = await import('xlsx');
 
             // Mapeamento de chaves para cabeçalhos amigáveis
             const headerMapping: { [K in keyof Equipment]?: string } = {
