@@ -668,64 +668,47 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
                 alert("Nenhum dado para exportar com os filtros atuais.");
                 return;
             }
-
-            // Dynamically import the library to ensure it's loaded.
-            // The UMD build from the CDN will attach the library to the window object.
-            await import('xlsx');
-            const XLSX = (window as any).XLSX;
-
+    
+            // Dynamically import the library and use the resolved module directly.
+            const importedModule = await import('xlsx');
+            
+            // Handle potential CJS/ESM module differences.
+            const XLSX = importedModule.default || importedModule;
+    
             if (!XLSX || !XLSX.utils || typeof XLSX.utils.json_to_sheet !== 'function') {
-                console.error("A biblioteca XLSX não foi carregada corretamente.", XLSX);
+                console.error("A biblioteca XLSX não foi carregada corretamente ou tem uma estrutura inesperada.", { importedModule });
                 alert("Ocorreu um erro ao carregar a biblioteca de exportação. Verifique o console para mais detalhes.");
                 return;
             }
-
-            // Mapeamento de chaves para cabeçalhos amigáveis
+    
             const headerMapping: { [K in keyof Equipment]?: string } = {
-                equipamento: 'Equipamento',
-                patrimonio: 'Patrimônio',
-                serial: 'Serial',
-                brand: 'Marca',
-                model: 'Modelo',
-                tipo: 'Tipo',
-                status: 'Status',
-                usuarioAtual: 'Usuário Atual',
-                emailColaborador: 'Email do Colaborador',
-                local: 'Local',
-                setor: 'Setor',
-                dataEntregaUsuario: 'Data de Entrega',
-                dataDevolucao: 'Data de Devolução',
-                condicaoTermo: 'Condição do Termo',
-                garantia: 'Garantia',
-                notaCompra: 'Nota de Compra',
-                identificador: 'Identificador',
-                nomeSO: 'Sistema Operacional',
-                memoriaFisicaTotal: 'Memória Física',
-                grupoPoliticas: 'Grupo de Políticas',
-                pais: 'País',
-                estadoProvincia: 'Estado/Província',
-                cidade: 'Cidade',
-                observacoes: 'Observações'
+                equipamento: 'Equipamento', patrimonio: 'Patrimônio', serial: 'Serial', brand: 'Marca',
+                model: 'Modelo', tipo: 'Tipo', status: 'Status', usuarioAtual: 'Usuário Atual',
+                emailColaborador: 'Email do Colaborador', local: 'Local', setor: 'Setor',
+                dataEntregaUsuario: 'Data de Entrega', dataDevolucao: 'Data de Devolução',
+                condicaoTermo: 'Condição do Termo', garantia: 'Garantia', notaCompra: 'Nota de Compra',
+                identificador: 'Identificador', nomeSO: 'Sistema Operacional',
+                memoriaFisicaTotal: 'Memória Física', grupoPoliticas: 'Grupo de Políticas',
+                pais: 'País', estadoProvincia: 'Estado/Província', cidade: 'Cidade', observacoes: 'Observações'
             };
-
+    
             const dataKeys = Object.keys(headerMapping) as (keyof Equipment)[];
-
-            // Mapeia os dados filtrados para o formato desejado com os cabeçalhos amigáveis
+    
             const dataToExport = filteredEquipment.map(item => {
                 const row: { [key: string]: any } = {};
                 dataKeys.forEach(key => {
                     const header = headerMapping[key];
                     if (header) {
-                        row[header] = item[key] ?? ''; // Usa string vazia para nulo/indefinido
+                        row[header] = item[key] ?? '';
                     }
                 });
                 return row;
             });
-
+    
             const ws = XLSX.utils.json_to_sheet(dataToExport);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Inventário");
-
+    
             const fileName = `inventario_equipamentos_${new Date().toISOString().split('T')[0]}.xlsx`;
             XLSX.writeFile(wb, fileName);
         } catch (error) {
