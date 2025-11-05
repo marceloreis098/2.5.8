@@ -14,6 +14,7 @@ export default defineConfig({
         'recharts',
         'qrcode.react',
         '@google/genai',
+        'xlsx',
       ],
     },
   },
