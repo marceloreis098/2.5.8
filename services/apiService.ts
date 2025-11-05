@@ -1,7 +1,5 @@
 import { User, Equipment, License, UserRole, EquipmentHistory, AuditLogEntry, AppSettings } from '../types';
 
-const API_BASE_URL = `http://${window.location.hostname}:3001/api`;
-
 const handleResponse = async (response: Response) => {
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: `HTTP error! status: ${response.status}` }));
@@ -10,18 +8,20 @@ const handleResponse = async (response: Response) => {
     return response.json();
 };
 
+const getApiBaseUrl = () => `http://${window.location.hostname}:3001/api`;
+
 const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
     const headers = {
         'Content-Type': 'application/json',
         ...options.headers,
     };
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers });
+    const response = await fetch(`${getApiBaseUrl()}${endpoint}`, { ...options, headers });
     return handleResponse(response);
 };
 
 export const checkApiStatus = async (): Promise<{ ok: boolean, message?: string }> => {
     try {
-        const response = await fetch(`${API_BASE_URL}`);
+        const response = await fetch(getApiBaseUrl());
         if (!response.ok) {
             throw new Error(`O servidor respondeu com o status: ${response.status}`);
         }
