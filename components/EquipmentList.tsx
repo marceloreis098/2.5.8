@@ -669,8 +669,9 @@ const EquipmentList: React.FC<EquipmentListProps> = ({ currentUser, companyName 
                 return;
             }
 
-            // Importa dinamicamente a biblioteca xlsx
-            const XLSX = await import('xlsx');
+            // Importa dinamicamente a biblioteca xlsx e lida com possíveis variações de módulo
+            const XLSXModule = await import('xlsx');
+            const XLSX = XLSXModule.default || XLSXModule;
 
             // Mapeamento de chaves para cabeçalhos amigáveis
             const headerMapping: { [K in keyof Equipment]?: string } = {
