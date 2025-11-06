@@ -550,9 +550,9 @@ const LicenseControl: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         const date = parseDateString(dateStr);
         if (!date) return <span className="font-semibold flex items-center gap-1.5 text-red-500"><Icon name="TriangleAlert" size={16} /> Data Inválida</span>;
         
-        // FIX: Pass the parsed Date object to the helper functions.
+        // FIX: Pass the parsed Date object to the helper functions instead of the raw string.
         const expiring = isExpiringSoon(date);
-        // FIX: Pass the parsed Date object to the helper functions.
+        // FIX: Pass the parsed Date object to the helper functions instead of the raw string.
         const expired = isExpired(date);
         const color = expired ? 'text-red-500 dark:text-red-400' : expiring ? 'text-yellow-500 dark:text-yellow-400' : '';
         const icon = expired ? 'TriangleAlert' : expiring ? 'Timer' : null;

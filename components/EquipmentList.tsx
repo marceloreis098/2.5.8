@@ -413,7 +413,7 @@ const EquipmentDetailModal: React.FC<{
                         </button>
                     )}
                     {canEdit && (
-                        <button onClick={() => onEdit(equipment)} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                        <button onClick={() => { onEdit(equipment); onClose(); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
                             <Icon name="Pencil" size={16} /> Editar
                         </button>
                     )}
